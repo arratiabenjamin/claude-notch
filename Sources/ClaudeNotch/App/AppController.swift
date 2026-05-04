@@ -38,6 +38,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         buildPanel()
         wireWatcher()
 
+        // Ask for notification permission on first launch. Best-effort —
+        // if the user denies, the app keeps working without notifications.
+        Task { await NotificationService.shared.requestAuthorizationIfNeeded() }
+
         // Restore visibility (default = visible).
         let visible = UserDefaults.standard.object(forKey: Keys.panelVisible) as? Bool ?? true
         if visible {

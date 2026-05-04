@@ -7,50 +7,86 @@ import AppKit
 
 struct SessionRow: View {
     let session: SessionState
+    @EnvironmentObject var store: SessionStore
     @State private var hovering = false
 
+    private var isExpanded: Bool { store.expandedSessionId == session.id }
+
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1.0)) { context in
-            HStack(spacing: 8) {
-                StatusDot(status: session.status)
-                Text(session.projectLabel)
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Spacer(minLength: 4)
-                Text(metaText(at: context.date))
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-                    .lineLimit(1)
-            }
-            .padding(.vertical, 5)
-            .padding(.horizontal, 4)
-            .contentShape(Rectangle())
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(.white.opacity(hovering ? 0.06 : 0))
-            )
-            .onHover { hovering = $0 }
-            .animation(.easeOut(duration: 0.15), value: hovering)
-            .contextMenu {
-                Button("Copy session ID") {
-                    let pb = NSPasteboard.general
-                    pb.clearContents()
-                    pb.setString(session.id, forType: .string)
+        VStack(alignment: .leading, spacing: 0) {
+            TimelineView(.periodic(from: .now, by: 1.0)) { context in
+                HStack(spacing: 8) {
+                    StatusDot(status: session.status)
+                    Text(session.projectLabel)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Spacer(minLength: 4)
+                    Text(metaText(at: context.date))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                    chevron
                 }
-                if let cwd = session.cwd, !cwd.isEmpty {
-                    Button("Copy working directory") {
+                .padding(.vertical, 5)
+                .padding(.horizontal, 4)
+                .contentShape(Rectangle())
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(.white.opacity(rowFillOpacity))
+                )
+                .onHover { hovering = $0 }
+                .onTapGesture {
+                    store.expandedSessionId = isExpanded ? nil : session.id
+                }
+                .animation(.easeOut(duration: 0.15), value: hovering)
+                .animation(.easeOut(duration: 0.15), value: isExpanded)
+                .contextMenu {
+                    Button(isExpanded ? "Collapse" : "Expand") {
+                        store.expandedSessionId = isExpanded ? nil : session.id
+                    }
+                    Divider()
+                    Button("Copy session ID") {
                         let pb = NSPasteboard.general
                         pb.clearContents()
-                        pb.setString(cwd, forType: .string)
+                        pb.setString(session.id, forType: .string)
+                    }
+                    if let cwd = session.cwd, !cwd.isEmpty {
+                        Button("Copy working directory") {
+                            let pb = NSPasteboard.general
+                            pb.clearContents()
+                            pb.setString(cwd, forType: .string)
+                        }
                     }
                 }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Text(accessibilityLabel(at: context.date)))
+                .accessibilityAddTraits(.isButton)
+                .accessibilityHint(Text(isExpanded ? "Collapse details" : "Expand for transcript and actions"))
             }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(Text(accessibilityLabel(at: context.date)))
+
+            if isExpanded {
+                ExpandedSessionView(session: session)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
+        .animation(.easeOut(duration: 0.2), value: isExpanded)
+    }
+
+    private var rowFillOpacity: Double {
+        if isExpanded { return 0.10 }
+        if hovering { return 0.06 }
+        return 0
+    }
+
+    @ViewBuilder
+    private var chevron: some View {
+        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(.tertiary)
+            .opacity(hovering || isExpanded ? 1 : 0.55)
     }
 
     // MARK: - Meta text

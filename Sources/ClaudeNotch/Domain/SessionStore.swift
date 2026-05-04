@@ -20,9 +20,19 @@ enum UIState: Equatable {
 final class SessionStore: ObservableObject {
     @Published private(set) var state: UIState = .loading
 
+    /// Which row is currently expanded in the panel. `nil` means none.
+    /// Lives here (not in a separate view-state object) because the row
+    /// expansion is a single-selection invariant tied to the data the store
+    /// already publishes. Setting this to a session id collapses any other.
+    @Published var expandedSessionId: String?
+
     /// Last successful populated render — kept so we can degrade gracefully
     /// when the file is mid-write (decode error) without flashing empty state.
     private var lastSuccessful: (active: [SessionState], recent: [SessionState])?
+
+    /// Snapshot of the most recent session list (active + recent merged), used
+    /// by NotificationService to detect running -> idle/ended transitions.
+    private var lastSessionsForNotify: [SessionState] = []
 
     /// Cap on RECENTLY COMPLETED rows; overflow is silent for v1.0.
     private static let recentCap = 5
@@ -94,9 +104,30 @@ final class SessionStore: ObservableObject {
         if active.isEmpty && recentArray.isEmpty {
             state = .empty
             lastSuccessful = ([], [])
+            // Collapse expansion if the expanded session is gone.
+            pruneExpansion(in: [])
         } else {
             state = .populated(active: active, recent: recentArray)
             lastSuccessful = (active, recentArray)
+            pruneExpansion(in: active + recentArray)
+        }
+
+        // Fire notifications based on running -> idle/ended transitions.
+        // We pass the FULL set the producer reported (not just active) so
+        // NotificationService sees the same `lastTurnDurationS` it did before.
+        let previous = lastSessionsForNotify
+        lastSessionsForNotify = sessions
+        Task { [weak self] in
+            await NotificationService.shared.evaluate(previous: previous, current: sessions)
+            _ = self // capture-list noop to keep ARC happy without retain.
+        }
+    }
+
+    /// Drop the expanded id if it is not in the visible set.
+    private func pruneExpansion(in visible: [SessionState]) {
+        guard let id = expandedSessionId else { return }
+        if !visible.contains(where: { $0.id == id }) {
+            expandedSessionId = nil
         }
     }
 
