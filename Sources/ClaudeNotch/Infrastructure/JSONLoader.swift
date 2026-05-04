@@ -86,7 +86,8 @@ struct JSONLoader: Sendable {
             lastTurnDurationS: partial.last_turn_duration_s,
             lastTurnFinishedAt: parseDate(partial.last_turn_finished_at, withFractional: withFractional, plain: plain),
             endedAt: parseDate(partial.ended_at, withFractional: withFractional, plain: plain),
-            lastResult: partial.last_result
+            lastResult: partial.last_result,
+            transcriptPath: partial.transcript_path
         )
     }
 

@@ -23,6 +23,9 @@ struct SessionState: Identifiable, Hashable, Sendable {
     let lastTurnFinishedAt: Date?
     let endedAt: Date?
     let lastResult: String?
+    /// Absolute path to the JSONL transcript on disk, when the producer recorded it.
+    /// Optional because older state files / partial writes may omit it.
+    let transcriptPath: String?
 
     enum Status: String, Sendable, Hashable {
         case running
