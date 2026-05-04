@@ -20,7 +20,14 @@ struct JSONLoader: Sendable {
 
     /// Decode raw bytes from active-sessions.json into the normalized session list.
     /// Throws on malformed JSON, schema mismatch, or oversize input.
-    static func decode(from data: Data) throws -> [SessionState] {
+    ///
+    /// `customNames`: optional [sessionId: name] map produced by `SessionNameLoader`,
+    /// used to populate `SessionState.customName` (the `/rename` value).
+    /// Default empty for backward compat with existing call sites and tests.
+    static func decode(
+        from data: Data,
+        customNames: [String: String] = [:]
+    ) throws -> [SessionState] {
         if data.count > maxSizeBytes {
             throw JSONLoaderError.sizeLimitExceeded(bytes: data.count)
         }
@@ -45,6 +52,7 @@ struct JSONLoader: Sendable {
             normalize(
                 outerKey: outerKey,
                 partial: partial,
+                customName: customNames[outerKey],
                 withFractional: withFractional,
                 plain: plain
             )
@@ -56,6 +64,7 @@ struct JSONLoader: Sendable {
     private static func normalize(
         outerKey: String,
         partial: PartialSession,
+        customName: String?,
         withFractional: ISO8601DateFormatter,
         plain: ISO8601DateFormatter
     ) -> SessionState {
@@ -87,7 +96,8 @@ struct JSONLoader: Sendable {
             lastTurnFinishedAt: parseDate(partial.last_turn_finished_at, withFractional: withFractional, plain: plain),
             endedAt: parseDate(partial.ended_at, withFractional: withFractional, plain: plain),
             lastResult: partial.last_result,
-            transcriptPath: partial.transcript_path
+            transcriptPath: partial.transcript_path,
+            customName: customName
         )
     }
 
