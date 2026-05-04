@@ -30,6 +30,11 @@ final class SessionStore: ObservableObject {
     /// when the file is mid-write (decode error) without flashing empty state.
     private var lastSuccessful: (active: [SessionState], recent: [SessionState])?
 
+    /// Last raw bytes successfully ingested. Cached so we can re-decode with
+    /// an updated `customNames` map when `~/.claude/sessions/` changes (live
+    /// `/rename` updates) without waiting for active-sessions.json to tick.
+    private var lastIngestedData: Data?
+
     /// Snapshot of the most recent session list (active + recent merged), used
     /// by NotificationService to detect running -> idle/ended transitions.
     private var lastSessionsForNotify: [SessionState] = []
@@ -62,6 +67,9 @@ final class SessionStore: ObservableObject {
             // production this is trivial; if it grows, cache by directory mtime.
             let customNames = SessionNameLoader.loadAll()
             let sessions = try JSONLoader.decode(from: data, customNames: customNames)
+            // Cache the bytes BEFORE apply so a `refreshNamesAndReingest`
+            // racing with a real ingest finds a consistent snapshot.
+            lastIngestedData = data
             apply(sessions: sessions)
         } catch let JSONLoaderError.schemaMismatch(version) {
             state = .schemaMismatch(version: version)
@@ -82,15 +90,36 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    /// Re-load `customNames` from `~/.claude/sessions/` and re-decode the
+    /// most recent active-sessions.json bytes. No-op if we never ingested
+    /// any data yet. Triggered by the DirectoryWatcher on `/rename` events
+    /// so the panel updates instantly instead of waiting for the next
+    /// active-sessions.json tick.
+    func refreshNamesAndReingest() {
+        guard let data = lastIngestedData else { return }
+        let customNames = SessionNameLoader.loadAll()
+        guard let sessions = try? JSONLoader.decode(from: data, customNames: customNames) else {
+            // Cached bytes failed to re-decode — leave existing UI alone;
+            // the next real watcher tick will recover us.
+            return
+        }
+        apply(sessions: sessions)
+    }
+
     // MARK: - Pure derive
 
     private func apply(sessions: [SessionState]) {
+        // Differentiate duplicate fallback labels (v1.3, Feature #2). Sessions
+        // the user explicitly named via `/rename` (i.e. `customName != nil`)
+        // are never disambiguated — that's the user's intent.
+        let disambiguated = SessionStore.disambiguate(sessions)
+
         let now = Date()
-        let active = sessions
+        let active = disambiguated
             .filter { $0.status == .running || $0.status == .idle }
             .sorted(by: SessionStore.activeOrdering)
 
-        let recent = sessions
+        let recent = disambiguated
             .filter { s in
                 guard s.status == .ended, let endedAt = s.endedAt else { return false }
                 return now.timeIntervalSince(endedAt) <= SessionStore.recentWindow
@@ -132,6 +161,58 @@ final class SessionStore: ObservableObject {
         if !visible.contains(where: { $0.id == id }) {
             expandedSessionId = nil
         }
+    }
+
+    /// Differentiate sessions that share a fallback display label.
+    ///
+    /// Rules:
+    ///   - Sessions with a non-empty `customName` are NEVER touched. The user
+    ///     chose that name via `/rename`; if two sessions happen to share it,
+    ///     that's their problem.
+    ///   - Sessions whose `displayName` (from project_label / cwd basename
+    ///     fallback) collides with another get a `displayNameOverride` set:
+    ///       1. If the parent dir basename of `cwd` differs across the group,
+    ///          use `"<base> · <parent>"`.
+    ///       2. Otherwise (same `cwd` parent, or `cwd` missing), append
+    ///          `" · pid:<pid>"` if the pid is known, else `" · <id8>"`.
+    ///
+    /// Pure function over the input array — order is preserved.
+    static func disambiguate(_ sessions: [SessionState]) -> [SessionState] {
+        // Group by current displayName, but only consider sessions WITHOUT
+        // a customName (renamed sessions are sacred — see rules above).
+        var groups: [String: [Int]] = [:]
+        for (i, s) in sessions.enumerated() {
+            // Skip user-renamed sessions outright.
+            if let name = s.customName, !name.isEmpty { continue }
+            groups[s.displayName, default: []].append(i)
+        }
+
+        var out = sessions
+        for (_, indices) in groups where indices.count > 1 {
+            // Step 1: try parent-dir basename to differentiate.
+            let parentBasenames: [String?] = indices.map { idx in
+                guard let cwd = sessions[idx].cwd, !cwd.isEmpty else { return nil }
+                let parent = (cwd as NSString).deletingLastPathComponent
+                let parentBase = (parent as NSString).lastPathComponent
+                return parentBase.isEmpty ? nil : parentBase
+            }
+            let uniqueParents = Set(parentBasenames.compactMap { $0 })
+            let parentsHelp = uniqueParents.count == indices.count &&
+                              parentBasenames.allSatisfy { $0 != nil }
+
+            for (k, idx) in indices.enumerated() {
+                let original = out[idx].displayName
+                if parentsHelp, let parent = parentBasenames[k] {
+                    out[idx].displayNameOverride = "\(original) · \(parent)"
+                } else if let pid = out[idx].pid {
+                    out[idx].displayNameOverride = "\(original) · pid:\(pid)"
+                } else {
+                    let short = String(out[idx].id.prefix(8))
+                    out[idx].displayNameOverride = "\(original) · \(short)"
+                }
+            }
+        }
+        return out
     }
 
     /// Ordering rule: running first (newest activity first), then idle (newest finish first).
