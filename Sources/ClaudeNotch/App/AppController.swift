@@ -16,7 +16,16 @@ final class AppController: NSObject, NSApplicationDelegate {
             .appendingPathComponent(".claude")
         return StateFileWatcher(directory: dir)
     }()
+    /// Watches `~/.claude/sessions/` for `/rename` updates so the panel can
+    /// re-decode the cached active-sessions.json with fresh names without
+    /// waiting for active-sessions.json itself to tick.
+    private lazy var sessionNamesWatcher: DirectoryWatcher = {
+        let dir = (NSHomeDirectory() as NSString)
+            .appendingPathComponent(".claude/sessions")
+        return DirectoryWatcher(directory: dir)
+    }()
     private var panel: FloatingPanel?
+    private var settingsWindow: NSWindow?
     private var statusItem: NSStatusItem?
     private var cancellables = Set<AnyCancellable>()
 
@@ -25,6 +34,9 @@ final class AppController: NSObject, NSApplicationDelegate {
         static let panelOriginX = "panelOriginX"
         static let panelOriginY = "panelOriginY"
         static let panelVisible = "panelVisible"
+        /// Default panel corner when no saved origin exists. Mirrors the same
+        /// key SettingsView writes via @AppStorage.
+        static let defaultPosition = "default_position"
     }
 
     private static let defaultPanelSize = NSSize(width: 320, height: 240)
@@ -38,9 +50,9 @@ final class AppController: NSObject, NSApplicationDelegate {
         buildPanel()
         wireWatcher()
 
-        // Ask for notification permission on first launch. Best-effort —
-        // if the user denies, the app keeps working without notifications.
-        Task { await NotificationService.shared.requestAuthorizationIfNeeded() }
+        // Notification authorization is LAZY (v1.3) — we ask the OS only
+        // when we're about to post a real notification. See
+        // NotificationService.ensureAuthorizedLazily.
 
         // Restore visibility (default = visible).
         let visible = UserDefaults.standard.object(forKey: Keys.panelVisible) as? Bool ?? true
@@ -52,6 +64,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         savePanelOrigin()
         watcher.stop()
+        sessionNamesWatcher.stop()
         cancellables.removeAll()
         panel?.orderOut(nil)
     }
@@ -105,7 +118,7 @@ final class AppController: NSObject, NSApplicationDelegate {
                 return candidate
             }
         }
-        return Self.defaultTopRightOrigin()
+        return Self.defaultOriginForUserCorner()
     }
 
     private static func originIsOnScreen(_ origin: NSPoint, size: NSSize) -> Bool {
@@ -118,14 +131,32 @@ final class AppController: NSObject, NSApplicationDelegate {
         return false
     }
 
-    private static func defaultTopRightOrigin() -> NSPoint {
+    /// Resolve the user's preferred corner from UserDefaults (Settings UI),
+    /// then map it to a screen-local origin. Falls back to top-right.
+    private static func defaultOriginForUserCorner() -> NSPoint {
+        let raw = UserDefaults.standard.string(forKey: Keys.defaultPosition)
+        let corner = PanelCorner(rawValue: raw ?? "") ?? .topRight
+        return defaultOrigin(for: corner)
+    }
+
+    private static func defaultOrigin(for corner: PanelCorner) -> NSPoint {
         let screen = NSScreen.main ?? NSScreen.screens.first
         guard let frame = screen?.visibleFrame else {
             return NSPoint(x: 100, y: 100)
         }
-        let x = frame.maxX - defaultPanelSize.width - defaultMargin
-        let y = frame.maxY - defaultPanelSize.height - defaultMargin
-        return NSPoint(x: x, y: y)
+        let w = defaultPanelSize.width
+        let h = defaultPanelSize.height
+        let m = defaultMargin
+        switch corner {
+        case .topRight:
+            return NSPoint(x: frame.maxX - w - m, y: frame.maxY - h - m)
+        case .topLeft:
+            return NSPoint(x: frame.minX + m, y: frame.maxY - h - m)
+        case .bottomRight:
+            return NSPoint(x: frame.maxX - w - m, y: frame.minY + m)
+        case .bottomLeft:
+            return NSPoint(x: frame.minX + m, y: frame.minY + m)
+        }
     }
 
     @objc private func handlePanelMoved(_ note: Notification) {
@@ -180,6 +211,14 @@ final class AppController: NSObject, NSApplicationDelegate {
         about.target = self
         menu.addItem(about)
 
+        let settings = NSMenuItem(
+            title: "Settings…",
+            action: #selector(showSettings(_:)),
+            keyEquivalent: ","
+        )
+        settings.target = self
+        menu.addItem(settings)
+
         menu.addItem(NSMenuItem.separator())
 
         let quit = NSMenuItem(
@@ -207,6 +246,59 @@ final class AppController: NSObject, NSApplicationDelegate {
         NSApp.orderFrontStandardAboutPanel(nil)
     }
 
+    @objc private func showSettings(_ sender: Any?) {
+        if let window = settingsWindow {
+            // Reuse the same window across opens — closing just hides it.
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+            return
+        }
+
+        let view = SettingsView(
+            onResetPosition: { [weak self] in self?.resetPanelPosition() },
+            onQuit: { NSApp.terminate(nil) }
+        )
+        let hosting = NSHostingController(rootView: view)
+        let window = NSWindow(contentViewController: hosting)
+        window.title = "Claude Notch Settings"
+        window.styleMask = [.titled, .closable]
+        window.isReleasedWhenClosed = false
+        window.center()
+
+        // Switch the app to a regular activation policy briefly so the
+        // settings window can become key. This is a small, well-known dance
+        // for menu-bar apps that need to show a real window.
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        self.settingsWindow = window
+
+        // Drop back to accessory once the user closes it so we don't hold
+        // a Dock icon for nothing.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleSettingsWillClose(_:)),
+            name: NSWindow.willCloseNotification,
+            object: window
+        )
+    }
+
+    @objc private func handleSettingsWillClose(_ note: Notification) {
+        NSApp.setActivationPolicy(.accessory)
+    }
+
+    /// Clear the persisted origin AND move the panel to the user's currently
+    /// selected default corner. Called from SettingsView.
+    private func resetPanelPosition() {
+        UserDefaults.standard.removeObject(forKey: Keys.panelOriginX)
+        UserDefaults.standard.removeObject(forKey: Keys.panelOriginY)
+        guard let panel else { return }
+        let origin = Self.defaultOriginForUserCorner()
+        panel.setFrameOrigin(origin)
+        // Re-persist immediately so the next launch lines up exactly here.
+        savePanelOrigin()
+    }
+
     @objc private func quitApp(_ sender: Any?) {
         NSApp.terminate(nil)
     }
@@ -228,5 +320,17 @@ final class AppController: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
 
         watcher.start()
+
+        // Live `/rename` propagation: any change inside ~/.claude/sessions/
+        // means a per-pid file was written/removed — re-decode the cached
+        // bytes with refreshed customNames. No-op if we never ingested yet.
+        sessionNamesWatcher.publisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.store.refreshNamesAndReingest()
+            }
+            .store(in: &cancellables)
+
+        sessionNamesWatcher.start()
     }
 }
