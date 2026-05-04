@@ -1,0 +1,5 @@
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"First valid response."}]},"timestamp":"2026-05-04T10:00:05Z"}
+{this is not valid json at all
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"go on"}]},"timestamp":"2026-05-04T10:00:10Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Second valid assistant response."}]},"timestamp":"2026-05-04T10:00:15Z"}
+broken trailing line }}}
