@@ -97,7 +97,8 @@ struct JSONLoader: Sendable {
             endedAt: parseDate(partial.ended_at, withFractional: withFractional, plain: plain),
             lastResult: partial.last_result,
             transcriptPath: partial.transcript_path,
-            customName: customName
+            customName: customName,
+            displayNameOverride: nil
         )
     }
 

@@ -5,6 +5,13 @@
 //
 // We only fire on the running -> idle / running -> ended transition. New
 // sessions appearing or sessions disappearing do NOT notify.
+//
+// Authorization is LAZY (v1.3): we never prompt on launch. The very first
+// time we're about to post a real notification we check the current status
+// and, if `notDetermined`, ask in response to that real event. If the user
+// denied, we silently drop. This avoids the macOS "Notifications from
+// Claude Notch — alerts, sounds, badges" prompt sticking around at startup
+// when the user has never triggered an actual long-turn.
 import Foundation
 import UserNotifications
 
@@ -20,30 +27,16 @@ final class NotificationService {
     private static let thresholdKey = "notify_threshold_s"
     private static let defaultThresholdSeconds: Double = 90
 
+    /// UserDefaults key for the multi-session rule. Default ON.
+    private static let multiSessionKey = "notify_on_multi_session"
+
     /// Cooldown per session: avoid double-notifying if the watcher emits two
     /// consecutive ticks for the same transition (FSEvents + safety poll).
     private static let dedupeWindow: TimeInterval = 5
 
     // MARK: - State
 
-    private var hasRequestedAuthorization = false
-    private var authorizationGranted = false
     private var lastNotifiedAt: [String: Date] = [:]
-
-    // MARK: - Authorization
-
-    /// Idempotent. Safe to call multiple times — the system caches the answer.
-    func requestAuthorizationIfNeeded() async {
-        guard !hasRequestedAuthorization else { return }
-        hasRequestedAuthorization = true
-        let center = UNUserNotificationCenter.current()
-        do {
-            let granted = try await center.requestAuthorization(options: [.alert, .sound])
-            authorizationGranted = granted
-        } catch {
-            authorizationGranted = false
-        }
-    }
 
     // MARK: - Evaluate transitions
 
@@ -57,6 +50,7 @@ final class NotificationService {
         for s in current { currById[s.id] = s }
 
         let threshold = effectiveThreshold()
+        let multiSessionEnabled = effectiveMultiSessionEnabled()
         let activeCount = current
             .filter { $0.status == .running || $0.status == .idle }
             .count
@@ -68,11 +62,15 @@ final class NotificationService {
             guard justEnded else { continue }
 
             let duration = Double(curr.lastTurnDurationS ?? 0)
-            let multiSession = activeCount > 1
+            let multiSession = multiSessionEnabled && activeCount > 1
             let longTurn = duration > threshold
 
             guard longTurn || multiSession else { continue }
             if recentlyNotified(id: id) { continue }
+
+            // Lazy authorization: only ask the OS NOW, in response to a real
+            // event the user actually cares about.
+            guard await ensureAuthorizedLazily() else { continue }
 
             await postNotification(
                 for: curr,
@@ -83,11 +81,41 @@ final class NotificationService {
         }
     }
 
+    /// Inspect the current notification settings and request authorization
+    /// only when the user has not yet been asked. Returns true if the app may
+    /// post a notification right now.
+    private func ensureAuthorizedLazily() async -> Bool {
+        let center = UNUserNotificationCenter.current()
+        let settings = await center.notificationSettings()
+        switch settings.authorizationStatus {
+        case .notDetermined:
+            // First real event ever — ask the user now.
+            let granted = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
+            return granted
+        case .denied:
+            return false
+        case .authorized, .provisional, .ephemeral:
+            return true
+        @unknown default:
+            return false
+        }
+    }
+
     // MARK: - Internals
 
     private func effectiveThreshold() -> Double {
         let raw = UserDefaults.standard.double(forKey: Self.thresholdKey)
         return raw > 0 ? raw : Self.defaultThresholdSeconds
+    }
+
+    /// Multi-session rule defaults to ON; UserDefaults.bool returns false
+    /// when the key is unset, so we explicitly check for presence.
+    private func effectiveMultiSessionEnabled() -> Bool {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: Self.multiSessionKey) == nil {
+            return true
+        }
+        return defaults.bool(forKey: Self.multiSessionKey)
     }
 
     private func recentlyNotified(id: String) -> Bool {
@@ -100,8 +128,6 @@ final class NotificationService {
         durationSeconds: Int,
         activeCount: Int
     ) async {
-        guard authorizationGranted else { return }
-
         let content = UNMutableNotificationContent()
         content.title = "Claude Code · \(session.displayName)"
         content.body = "\(durationSeconds)s · \(activeCount) active session\(activeCount == 1 ? "" : "s")"

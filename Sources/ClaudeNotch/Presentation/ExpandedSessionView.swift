@@ -2,17 +2,17 @@
 // Inline detail shown directly under a SessionRow when the user clicks it.
 // Three blocks: transcript snippet, meta line, action buttons.
 //
-// The snippet is loaded async (small file IO) and refreshed every 5s while
-// the underlying session is `.running`. Idle/ended sessions are static —
-// no point polling.
+// As of v1.3 the snippet is driven by a `TranscriptWatcher` that subscribes
+// to FS events on the transcript file (no more 5s polling). The same watcher
+// keeps a low-frequency safety timer for cases where the FD source goes
+// silent (file rotation, sleep/wake, etc.).
 import SwiftUI
 import AppKit
 
 struct ExpandedSessionView: View {
     let session: SessionState
 
-    @State private var snippet: TranscriptParser.SnippetState = .loading
-    @State private var refreshTask: Task<Void, Never>?
+    @StateObject private var watcher = TranscriptWatcher()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -30,12 +30,10 @@ struct ExpandedSessionView: View {
         .padding(.top, 2)
         .padding(.horizontal, 4)
         .task(id: session.transcriptPath) {
-            await loadSnippet()
-            startAutoRefreshIfRunning()
+            await watcher.start(path: session.transcriptPath ?? "")
         }
         .onDisappear {
-            refreshTask?.cancel()
-            refreshTask = nil
+            watcher.stop()
         }
     }
 
@@ -43,7 +41,7 @@ struct ExpandedSessionView: View {
 
     @ViewBuilder
     private var snippetBlock: some View {
-        switch snippet {
+        switch watcher.snippet {
         case .loading:
             Text("Loading transcript…")
                 .font(.system(size: 11))
@@ -141,37 +139,6 @@ struct ExpandedSessionView: View {
                 }
             }
             Spacer(minLength: 0)
-        }
-    }
-
-    // MARK: - Loading
-
-    private func loadSnippet() async {
-        guard let path = session.transcriptPath, !path.isEmpty else {
-            snippet = .fileMissing
-            return
-        }
-        let result = await TranscriptParser.lastAssistantText(at: path)
-        // Avoid clobbering with stale results if the path changed mid-flight.
-        if !Task.isCancelled {
-            snippet = result
-        }
-    }
-
-    private func startAutoRefreshIfRunning() {
-        refreshTask?.cancel()
-        guard session.status == .running, let path = session.transcriptPath else {
-            refreshTask = nil
-            return
-        }
-        refreshTask = Task { @MainActor in
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 5_000_000_000) // 5s
-                if Task.isCancelled { return }
-                let next = await TranscriptParser.lastAssistantText(at: path)
-                if Task.isCancelled { return }
-                snippet = next
-            }
         }
     }
 
