@@ -55,6 +55,12 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var collapseTimer: Timer?
     private var globalClickMonitor: Any?
     private var localClickMonitor: Any?
+    /// Global mouse-moved monitor installed only while expanded. Watches whether
+    /// the cursor is in the hot zone (notch ∪ panel ∪ bridge between them) and
+    /// drives the auto-collapse timer. NSTrackingArea alone is not sufficient
+    /// because the cursor can leave the panel through the gap to the notch and
+    /// we still want to keep the panel open in that case.
+    private var globalMouseMoveMonitor: Any?
 
     // Persistence keys
     private enum Keys {
@@ -114,6 +120,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             NSEvent.removeMonitor(monitor)
             localClickMonitor = nil
         }
+        uninstallMouseMoveMonitor()
         watcher.stop()
         sessionNamesWatcher.stop()
         cancellables.removeAll()
@@ -175,6 +182,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func transitionToCompact(notch: NotchInfo, animated: Bool = true) {
         guard let panel else { return }
         cancelCollapseTimer()
+        uninstallMouseMoveMonitor()
 
         let view = CompactPanelView(notchHeight: notch.frame.height, notchWidth: notch.frame.width)
             .environmentObject(store)
@@ -183,6 +191,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         // The compact pill is pinned exactly on the notch. Disable drag.
         panel.isMovableByWindowBackground = false
         panel.level = FloatingPanel.notchLevel
+        // No shadow on compact — any shadow leaks outside the notch silhouette.
+        panel.setCompactChrome()
 
         let frame = panel.compactFrame(notch: notch)
         if animated && mode == .expanded {
@@ -204,6 +214,8 @@ final class AppController: NSObject, NSApplicationDelegate {
 
         panel.isMovableByWindowBackground = false
         panel.level = FloatingPanel.notchLevel
+        // Glass panel earns its drop shadow back.
+        panel.setFloatingChrome()
 
         let frame = panel.expandedFrame(notch: notch, contentSize: Self.expandedContentSize)
         if animated {
@@ -214,12 +226,16 @@ final class AppController: NSObject, NSApplicationDelegate {
         panel.orderFrontRegardless()
         UserDefaults.standard.set(true, forKey: Keys.panelVisible)
         mode = .expanded
+        // Watch the cursor globally so we can collapse when the user simply
+        // moves the mouse away — no clicks required.
+        installMouseMoveMonitor()
         scheduleCollapseTimer()
     }
 
     private func transitionToFreeFloating(animated: Bool = false) {
         guard let panel else { return }
         cancelCollapseTimer()
+        uninstallMouseMoveMonitor()
 
         let view = SessionListView()
             .environmentObject(store)
@@ -229,6 +245,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         // saved origin in defaults, normal floating level.
         panel.isMovableByWindowBackground = true
         panel.level = .floating
+        panel.setFloatingChrome()
 
         let origin = restoredOrigin()
         let frame = NSRect(origin: origin, size: Self.defaultPanelSize)
@@ -245,6 +262,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func transitionToHidden() {
         guard let panel else { return }
         cancelCollapseTimer()
+        uninstallMouseMoveMonitor()
         panel.orderOut(nil)
         UserDefaults.standard.set(false, forKey: Keys.panelVisible)
         mode = .hidden
@@ -273,8 +291,10 @@ final class AppController: NSObject, NSApplicationDelegate {
                 transitionToExpanded(notch: notch)
             }
         } else {
-            // Cursor left — if we're expanded, start the auto-collapse timer.
-            if mode == .expanded {
+            // Cursor left the SwiftUI hosting view. The global mouse-moved
+            // monitor (installed in expanded mode) will keep deciding whether
+            // to keep the timer alive based on the broader hot zone.
+            if mode == .expanded, collapseTimer == nil {
                 scheduleCollapseTimer()
             }
         }
@@ -296,20 +316,58 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private func handleCollapseTimeout() {
         guard mode == .expanded, let notch = notchInfo else { return }
-        // Final guard: if the cursor actually IS over the panel right now
-        // (e.g. the user came back without firing mouseEntered for some
-        // reason), reschedule instead of collapsing.
-        if isMouseOverPanel() {
+        // Final guard: if the cursor is back inside the hot zone right now
+        // (came in too fast for mouseMoved to register), reschedule.
+        if isMouseInHotZone() {
             scheduleCollapseTimer()
             return
         }
         transitionToCompact(notch: notch)
     }
 
-    private func isMouseOverPanel() -> Bool {
-        guard let panel else { return false }
+    /// Hot zone = compact pill area ∪ expanded panel area ∪ a vertical bridge
+    /// between them at the panel's horizontal range. The bridge keeps the
+    /// panel open while the user travels with the mouse from the notch down
+    /// into the panel (or back), even though those are separated by a few pt.
+    private func isMouseInHotZone() -> Bool {
         let mouse = NSEvent.mouseLocation
-        return panel.frame.contains(mouse)
+        if let panel, panel.frame.contains(mouse) { return true }
+        if let notch = notchInfo, notch.frame.contains(mouse) { return true }
+        if let panel, let notch = notchInfo {
+            let bridge = CGRect(
+                x: panel.frame.minX,
+                y: panel.frame.maxY,
+                width: panel.frame.width,
+                height: max(0, notch.frame.minY - panel.frame.maxY)
+            )
+            if bridge.contains(mouse) { return true }
+        }
+        return false
+    }
+
+    private func installMouseMoveMonitor() {
+        if globalMouseMoveMonitor != nil { return }
+        globalMouseMoveMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
+            Task { @MainActor in
+                self?.handleMouseMove()
+            }
+        }
+    }
+
+    private func uninstallMouseMoveMonitor() {
+        if let monitor = globalMouseMoveMonitor {
+            NSEvent.removeMonitor(monitor)
+            globalMouseMoveMonitor = nil
+        }
+    }
+
+    private func handleMouseMove() {
+        guard mode == .expanded else { return }
+        if isMouseInHotZone() {
+            cancelCollapseTimer()
+        } else if collapseTimer == nil {
+            scheduleCollapseTimer()
+        }
     }
 
     /// Clicks ANYWHERE outside the expanded panel collapse it back to compact.

@@ -33,6 +33,10 @@ struct CompactPanelView: View {
         // Any translucency here would expose the menu-bar wallpaper and
         // break the "extension of the notch" illusion.
         .background(Color.black)
+        // The hardware notch has rounded BOTTOM corners (the top is flush
+        // against the bezel). Clip with matching radius so the pill silhouette
+        // reads as one with the cutout.
+        .clipShape(NotchPillShape(bottomCornerRadius: 10))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityDescription)
     }
@@ -76,5 +80,39 @@ struct CompactPanelView: View {
         default:
             return "Claude Notch."
         }
+    }
+}
+
+/// Shape that matches the silhouette of the MacBook hardware notch:
+/// flat top edge (flush against the bezel) and rounded BOTTOM corners.
+/// Without this, the panel renders sharp 90° corners at the bottom and
+/// looks like a black brick taped onto the screen instead of an extension
+/// of the cutout.
+struct NotchPillShape: Shape {
+    var bottomCornerRadius: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let r = min(bottomCornerRadius, min(rect.width, rect.height) / 2)
+        var p = Path()
+        p.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - r))
+        p.addArc(
+            center: CGPoint(x: rect.maxX - r, y: rect.maxY - r),
+            radius: r,
+            startAngle: .degrees(0),
+            endAngle: .degrees(90),
+            clockwise: false
+        )
+        p.addLine(to: CGPoint(x: rect.minX + r, y: rect.maxY))
+        p.addArc(
+            center: CGPoint(x: rect.minX + r, y: rect.maxY - r),
+            radius: r,
+            startAngle: .degrees(90),
+            endAngle: .degrees(180),
+            clockwise: false
+        )
+        p.closeSubpath()
+        return p
     }
 }

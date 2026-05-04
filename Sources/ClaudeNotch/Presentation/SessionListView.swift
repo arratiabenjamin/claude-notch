@@ -11,7 +11,41 @@ struct SessionListView: View {
 
     var body: some View {
         ZStack {
-            VisualEffectBackground(material: .popover, cornerRadius: 14)
+            // Base: translucent HUD-style vibrancy. `.hudWindow` is noticeably
+            // more see-through than `.popover` and gives the wallpaper-bleed
+            // that makes "liquid glass" read as glass instead of grey paint.
+            VisualEffectBackground(material: .hudWindow, cornerRadius: 18)
+
+            // Subtle vertical tint — top is a touch lighter, bottom a touch
+            // darker. Gives the surface curvature without a heavy gradient.
+            LinearGradient(
+                colors: [
+                    Color.white.opacity(0.10),
+                    Color.white.opacity(0.02),
+                    Color.black.opacity(0.06)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .allowsHitTesting(false)
+
+            // Inner highlight stroke — a thin bright line on the top edge
+            // catches the eye like a beveled glass rim. Doubled with a fainter
+            // outer stroke for a soft outline against the wallpaper.
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.35),
+                            Color.white.opacity(0.05)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    lineWidth: 1
+                )
+                .blendMode(.plusLighter)
+                .allowsHitTesting(false)
 
             VStack(alignment: .leading, spacing: 12) {
                 header
@@ -22,7 +56,7 @@ struct SessionListView: View {
         }
         .frame(width: 320)
         .frame(maxHeight: 480)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     // MARK: - Header

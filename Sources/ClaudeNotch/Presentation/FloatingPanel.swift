@@ -81,4 +81,21 @@ final class FloatingPanel: NSPanel {
             self.animator().setFrame(frame, display: true)
         }
     }
+
+    /// Configure window chrome for compact (notch-pinned) mode.
+    /// In compact mode any shadow leaks pixels outside the hardware notch
+    /// silhouette, breaking the "extension of the cutout" illusion. We also
+    /// invalidate the existing shadow so AppKit recomputes it from the
+    /// transparent regions of the new content view.
+    func setCompactChrome() {
+        self.hasShadow = false
+        self.invalidateShadow()
+    }
+
+    /// Configure window chrome for expanded / free-floating modes — the
+    /// glass panel benefits from a soft drop shadow to lift it off the wallpaper.
+    func setFloatingChrome() {
+        self.hasShadow = true
+        self.invalidateShadow()
+    }
 }
