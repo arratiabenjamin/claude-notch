@@ -58,7 +58,10 @@ final class SessionStore: ObservableObject {
 
         // Decode path.
         do {
-            let sessions = try JSONLoader.decode(from: data)
+            // Pull the latest /rename names every tick. With ~6 small files in
+            // production this is trivial; if it grows, cache by directory mtime.
+            let customNames = SessionNameLoader.loadAll()
+            let sessions = try JSONLoader.decode(from: data, customNames: customNames)
             apply(sessions: sessions)
         } catch let JSONLoaderError.schemaMismatch(version) {
             state = .schemaMismatch(version: version)
