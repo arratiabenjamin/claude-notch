@@ -44,10 +44,21 @@ struct SettingsView: View {
     @AppStorage("notify_threshold_s") private var thresholdSeconds: Double = 90
     @AppStorage("default_position") private var defaultPositionRaw: String = PanelCorner.topRight.rawValue
     @AppStorage("notify_on_multi_session") private var notifyOnMultiSession: Bool = true
+    @AppStorage("use_notch_mode") private var useNotchMode: Bool = true
+    @AppStorage("use_notch_mode_explicitly_set") private var useNotchModeExplicitlySet: Bool = false
 
     /// String-bound mirror of `thresholdSeconds` so the user can type freely
     /// without losing focus on every keystroke.
     @State private var thresholdInput: String = ""
+
+    /// True when the user is on a Mac with a hardware notch (MacBook Pro 14"/16"
+    /// post-2021, MacBook Air post-2022). Drives whether we show the toggle at all.
+    private var hasNotchHardware: Bool {
+        if #available(macOS 12.0, *) {
+            return (NSScreen.main?.safeAreaInsets.top ?? 0) > 0
+        }
+        return false
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -78,9 +89,29 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            // Notch mode (only shown on Macs with a hardware notch)
+            if hasNotchHardware {
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("Use notch as Dynamic Island", isOn: Binding(
+                        get: { useNotchMode },
+                        set: { newValue in
+                            useNotchMode = newValue
+                            useNotchModeExplicitlySet = true
+                            NotificationCenter.default.post(
+                                name: .claudeNotchModeDidChange,
+                                object: nil
+                            )
+                        }
+                    ))
+                    Text("Panel sits on the notch and expands when you hover over it.\nTurn off to use the classic floating pill.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             // Default position
             VStack(alignment: .leading, spacing: 4) {
-                Text("Default position")
+                Text("Default position (free-floating mode)")
                     .font(.system(size: 12, weight: .medium))
                 Picker("", selection: $defaultPositionRaw) {
                     ForEach(PanelCorner.allCases) { corner in
