@@ -103,7 +103,7 @@ final class NotificationService {
         guard authorizationGranted else { return }
 
         let content = UNMutableNotificationContent()
-        content.title = "Claude Code · \(session.projectLabel)"
+        content.title = "Claude Code · \(session.displayName)"
         content.body = "\(durationSeconds)s · \(activeCount) active session\(activeCount == 1 ? "" : "s")"
         content.sound = .default
 

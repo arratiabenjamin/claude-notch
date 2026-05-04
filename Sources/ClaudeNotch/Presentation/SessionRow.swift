@@ -17,7 +17,7 @@ struct SessionRow: View {
             TimelineView(.periodic(from: .now, by: 1.0)) { context in
                 HStack(spacing: 8) {
                     StatusDot(status: session.status)
-                    Text(session.projectLabel)
+                    Text(session.displayName)
                         .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
@@ -126,7 +126,7 @@ struct SessionRow: View {
             case .unknown: return "unknown status"
             }
         }()
-        return "Session \(session.projectLabel), \(statusText), \(metaText(at: now))"
+        return "Session \(session.displayName), \(statusText), \(metaText(at: now))"
     }
 
     private static func relative(from date: Date, to now: Date) -> String {
