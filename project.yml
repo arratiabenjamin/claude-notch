@@ -35,6 +35,8 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_LSMinimumSystemVersion: "14.0"
         INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026 Benjamín Arratia / Velion. MIT licensed."
+        INFOPLIST_KEY_NSUserNotificationsUsageDescription: "Claude Notch shows alerts when Claude finishes a long task or when multiple sessions are active."
+        INFOPLIST_KEY_NSAppleEventsUsageDescription: "Claude Notch uses AppleScript to open Terminal at a session's working directory."
   ClaudeNotchTests:
     type: bundle.unit-test
     platform: macOS
