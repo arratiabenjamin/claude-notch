@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "updated_at": "2026-05-04T14:00:00Z",
+  "sessions": {
+    "0dbdb8bb-5b09-4650-992f-874fd73b5541": {
+      "status": "running",
+      "last_turn_duration_s": 108,
+      "last_turn_finished_at": "2026-05-04T17:47:30Z",
+      "last_result": "ok",
+      "prompt_started_at": "2026-05-04T17:52:24Z"
+    },
+    "fully-empty-key-aaaa-bbbb-cccc-dddd-eeeeeeeeeeee": {},
+    "with-cwd-only-key-aaaa-bbbb-cccc-dddd-eeeeeeeeee": {
+      "cwd": "/Users/benja/code/Workly-GestionTrabajos/Workly"
+    }
+  }
+}

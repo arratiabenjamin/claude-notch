@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "updated_at": "2026-05-04T14:00:00Z",
+  "sessions": {
+    "run-001-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa": {
+      "session_id": "run-001-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      "pid": 11001,
+      "cwd": "/Users/benja/code/velion",
+      "project_label": "Velion",
+      "started_at": "2026-05-04T13:50:00Z",
+      "prompt_started_at": "2026-05-04T13:59:00Z",
+      "status": "running",
+      "last_turn_duration_s": 60,
+      "last_turn_finished_at": "2026-05-04T13:55:00Z",
+      "last_result": "ok"
+    },
+    "run-002-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb": {
+      "session_id": "run-002-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+      "pid": 11002,
+      "cwd": "/Users/benja/code/workly",
+      "project_label": "Workly",
+      "started_at": "2026-05-04T13:30:00Z",
+      "prompt_started_at": "2026-05-04T13:55:00Z",
+      "status": "running",
+      "last_turn_duration_s": 45,
+      "last_result": "ok"
+    },
+    "run-003-cccccccc-cccc-cccc-cccc-cccccccccccc": {
+      "session_id": "run-003-cccccccc-cccc-cccc-cccc-cccccccccccc",
+      "pid": 11003,
+      "cwd": "/Users/benja/code/agendamedica",
+      "project_label": "AgendaMedica",
+      "started_at": "2026-05-04T13:00:00Z",
+      "status": "running"
+    },
+    "idl-001-dddddddd-dddd-dddd-dddd-dddddddddddd": {
+      "session_id": "idl-001-dddddddd-dddd-dddd-dddd-dddddddddddd",
+      "pid": 12001,
+      "cwd": "/Users/benja/code/velion",
+      "project_label": "Velion",
+      "started_at": "2026-05-04T12:00:00Z",
+      "last_turn_finished_at": "2026-05-04T13:40:00Z",
+      "last_turn_duration_s": 120,
+      "status": "idle",
+      "last_result": "ok"
+    },
+    "idl-002-eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee": {
+      "session_id": "idl-002-eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
+      "pid": 12002,
+      "cwd": "/Users/benja/projects/sideproject",
+      "project_label": "Sideproject",
+      "started_at": "2026-05-04T11:30:00Z",
+      "last_turn_finished_at": "2026-05-04T13:35:00Z",
+      "status": "idle"
+    },
+    "end-001-ffffffff-ffff-ffff-ffff-ffffffffffff": {
+      "session_id": "end-001-ffffffff-ffff-ffff-ffff-ffffffffffff",
+      "pid": 13001,
+      "cwd": "/Users/benja/code/velion",
+      "project_label": "Velion",
+      "started_at": "2026-05-04T10:00:00Z",
+      "ended_at": "2026-05-04T13:30:00Z",
+      "status": "ended",
+      "last_result": "ok"
+    },
+    "end-002-99999999-9999-9999-9999-999999999999": {
+      "session_id": "end-002-99999999-9999-9999-9999-999999999999",
+      "pid": 13002,
+      "cwd": "/Users/benja/code/workly",
+      "project_label": "Workly",
+      "started_at": "2026-05-04T09:00:00Z",
+      "ended_at": "2026-05-04T13:20:00Z",
+      "status": "ended",
+      "last_result": "error"
+    },
+    "end-003-88888888-8888-8888-8888-888888888888": {
+      "session_id": "end-003-88888888-8888-8888-8888-888888888888",
+      "pid": 13003,
+      "cwd": "/Users/benja/projects/test-app",
+      "project_label": "TestApp",
+      "started_at": "2026-05-04T08:00:00Z",
+      "ended_at": "2026-05-04T12:55:00Z",
+      "status": "ended",
+      "last_result": "ok"
+    },
+    "end-004-77777777-7777-7777-7777-777777777777": {
+      "session_id": "end-004-77777777-7777-7777-7777-777777777777",
+      "pid": 13004,
+      "cwd": "/Users/benja/code/scratch",
+      "project_label": "Scratch",
+      "started_at": "2026-05-04T07:00:00Z",
+      "ended_at": "2026-05-04T11:55:00Z",
+      "status": "ended",
+      "last_result": "ok"
+    }
+  }
+}
