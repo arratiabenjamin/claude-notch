@@ -107,6 +107,39 @@ final class JSONLoaderTests: XCTestCase {
         }
     }
 
+    // MARK: - Custom names (/rename — v1.2)
+
+    /// Verifies that a customNames map keyed by canonical session id is woven
+    /// into the resulting SessionState and that displayName prefers it over
+    /// projectLabel, even when projectLabel resolves to a non-empty value.
+    func testCustomNameOverridesProjectLabel() throws {
+        let data = try loadFixture("golden")
+        let renameMap = [
+            "run-001-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa": "MyRenamed"
+        ]
+        let sessions = try JSONLoader.decode(from: data, customNames: renameMap)
+
+        guard let renamed = sessions.first(where: { $0.id.hasPrefix("run-001-") }) else {
+            XCTFail("Did not find run-001 session")
+            return
+        }
+        XCTAssertEqual(renamed.customName, "MyRenamed",
+                       "customName must be passed through from the map")
+        XCTAssertEqual(renamed.projectLabel, "Velion",
+                       "projectLabel stays as the secondary fallback")
+        XCTAssertEqual(renamed.displayName, "MyRenamed",
+                       "displayName must prefer customName over projectLabel")
+
+        // Sessions NOT in the map must keep customName == nil and fall back to projectLabel.
+        guard let untouched = sessions.first(where: { $0.id.hasPrefix("run-002-") }) else {
+            XCTFail("Did not find run-002 session")
+            return
+        }
+        XCTAssertNil(untouched.customName)
+        XCTAssertEqual(untouched.displayName, "Workly",
+                       "Without a custom name, displayName falls back to projectLabel")
+    }
+
     // MARK: - Schema mismatch
 
     func testSchemaV2ThrowsSchemaMismatch() throws {
