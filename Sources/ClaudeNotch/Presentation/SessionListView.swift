@@ -30,9 +30,11 @@ struct SessionListView: View {
     @ViewBuilder
     private var header: some View {
         HStack(spacing: 8) {
-            Text("◆")
-                .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(.primary)
+            Image("PanelLogo")
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 18, height: 18)
+                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
             Text("Claude Code")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.primary)
