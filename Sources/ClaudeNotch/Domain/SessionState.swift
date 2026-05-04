@@ -34,13 +34,24 @@ struct SessionState: Identifiable, Hashable, Sendable {
     /// `~/.claude/sessions/<pid>.json` via SessionNameLoader.
     let customName: String?
 
+    /// Optional override applied AFTER decoding, by the SessionStore's
+    /// disambiguation pass. NEVER set this from the JSON loader — it exists
+    /// solely so that two sessions sharing a fallback label (e.g. two
+    /// "Workly") can be told apart in the UI without mutating the original
+    /// `customName` (which represents the user's `/rename` choice).
+    var displayNameOverride: String?
+
     /// What to render in the UI. Resolution order:
-    /// 1. `customName` (the `/rename` value) if set & non-empty — highest priority
-    /// 2. `projectLabel` (already resolved through label/cwd basename fallback chain)
-    /// 3. first 8 chars of `id` as last-resort
+    /// 1. `displayNameOverride` (post-decode disambiguation) — highest priority
+    /// 2. `customName` (the `/rename` value) if set & non-empty
+    /// 3. `projectLabel` (already resolved through label/cwd basename fallback chain)
+    /// 4. first 8 chars of `id` as last-resort
     /// `projectLabel` is normally non-empty (the loader fills its own fallback)
-    /// so the third branch is just paranoia.
+    /// so the fourth branch is just paranoia.
     var displayName: String {
+        if let override = displayNameOverride, !override.isEmpty {
+            return override
+        }
         if let name = customName, !name.isEmpty {
             return name
         }
