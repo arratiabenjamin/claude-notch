@@ -14,6 +14,7 @@ settings:
     DEVELOPMENT_TEAM: ""
     ENABLE_HARDENED_RUNTIME: NO
     PRODUCT_NAME: "Claude Notch"
+    SWIFT_STRICT_CONCURRENCY: complete
 targets:
   ClaudeNotch:
     type: application
@@ -25,6 +26,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.velion.claude-notch
+        PRODUCT_MODULE_NAME: ClaudeNotch
         INFOPLIST_KEY_LSUIElement: NO
         INFOPLIST_KEY_NSPrincipalClass: NSApplication
         INFOPLIST_KEY_CFBundleDisplayName: "Claude Notch"
@@ -33,3 +35,28 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_LSMinimumSystemVersion: "14.0"
         INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026 Benjamín Arratia / Velion. MIT licensed."
+  ClaudeNotchTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/ClaudeNotchTests
+    dependencies:
+      - target: ClaudeNotch
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.velion.claude-notch.tests
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Claude Notch.app/Contents/MacOS/Claude Notch"
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_STRICT_CONCURRENCY: complete
+        PRODUCT_MODULE_NAME: ClaudeNotchTests
+        SWIFT_INSTALL_OBJC_HEADER: NO
+schemes:
+  ClaudeNotch:
+    build:
+      targets:
+        ClaudeNotch: all
+        ClaudeNotchTests: [test]
+    test:
+      targets:
+        - ClaudeNotchTests
