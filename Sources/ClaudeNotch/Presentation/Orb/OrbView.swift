@@ -16,12 +16,20 @@ import AppKit
 
 struct OrbView: View {
     @EnvironmentObject var store: SessionStore
+    @AppStorage("use_notch_mode") private var useNotchMode: Bool = true
+    @AppStorage("use_notch_mode_explicitly_set") private var useNotchModeExplicitlySet: Bool = false
 
     /// Whether the panel is showing satellites (true) or just the central orb (false).
     @State private var bloomed: Bool = false
 
     /// Currently hovered satellite session id, for the floating name label.
     @State private var hoveredId: String? = nil
+
+    /// True only on Macs with hardware notch — drives whether the mode toggle
+    /// button is shown.
+    private var hasNotchHardware: Bool {
+        (NSScreen.main?.safeAreaInsets.top ?? 0) > 0
+    }
 
     /// Pixel-space dimensions of the inner stage. Halo extends past these bounds
     /// but never gets clipped because the surrounding ZStack uses `.allowsHitTesting`
@@ -70,7 +78,7 @@ struct OrbView: View {
                 VelionOrb(
                     size: bloomed ? centralOrbSizeBloomed : centralOrbSizeCollapsed,
                     glowIntensity: aggregateGlow,
-                    color: aggregateColor
+                    accent: aggregateColor
                 )
                 .onTapGesture {
                     withAnimation(.spring(response: 0.55, dampingFraction: 0.78)) {
@@ -132,6 +140,19 @@ struct OrbView: View {
                 }
             }
             .frame(width: stageSize, height: stageSize)
+
+            // Mode toggle (notch ↔ floating) in the top-right corner. Only on
+            // hardware with a notch — without one there's no second mode.
+            if hasNotchHardware {
+                VStack {
+                    HStack {
+                        Spacer()
+                        modeToggleButton
+                    }
+                    Spacer()
+                }
+                .padding(10)
+            }
         }
         .frame(width: stageSize, height: stageSize)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
@@ -176,6 +197,37 @@ struct OrbView: View {
         }
     }
 
+    /// Toggle between notch mode (Dynamic Island core) and free-floating
+    /// window. Same effect as the Settings toggle: flips `use_notch_mode`,
+    /// stamps `use_notch_mode_explicitly_set`, and posts the notification
+    /// AppController listens to.
+    @ViewBuilder
+    private var modeToggleButton: some View {
+        Button {
+            useNotchMode.toggle()
+            useNotchModeExplicitlySet = true
+            NotificationCenter.default.post(name: .claudeNotchModeDidChange, object: nil)
+        } label: {
+            Image(systemName: useNotchMode
+                  ? "macwindow"
+                  : "rectangle.center.inset.filled")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.75))
+                .frame(width: 22, height: 22)
+                .background(
+                    Circle()
+                        .fill(Color.white.opacity(0.10))
+                        .overlay(
+                            Circle()
+                                .stroke(Color.white.opacity(0.18), lineWidth: 0.5)
+                        )
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(useNotchMode ? "Sacar a ventana flotante" : "Anclar al notch")
+    }
+
     private func sessionLabel(_ session: SessionState) -> some View {
         Text(session.displayName)
             .font(.system(size: 11, weight: .semibold))
@@ -203,17 +255,17 @@ struct OrbView: View {
     }
 
     /// Aggregate orb tint:
-    /// - any running session  → warm gold-silver
-    /// - idle but populated   → bright silver
-    /// - empty / loading      → dim silver
+    /// - any running session  → warm amber (tool/work tone)
+    /// - idle but populated   → electric cyan (default tech accent)
+    /// - empty / loading      → cool desaturated cyan
     private var aggregateColor: Color {
         switch store.state {
         case .populated(let active) where active.contains(where: { $0.status == .running }):
-            return Color(red: 0.96, green: 0.88, blue: 0.62)
+            return Color(red: 1.00, green: 0.80, blue: 0.35)
         case .populated(let active) where !active.isEmpty:
-            return Color(white: 0.92)
+            return Color(red: 0.30, green: 0.85, blue: 1.00)
         default:
-            return Color(white: 0.70)
+            return Color(red: 0.45, green: 0.65, blue: 0.85)
         }
     }
 
@@ -222,9 +274,9 @@ struct OrbView: View {
         case .populated(let active) where active.contains(where: { $0.status == .running }):
             return 0.95
         case .populated(let active) where !active.isEmpty:
-            return 0.75
+            return 0.80
         default:
-            return 0.35
+            return 0.40
         }
     }
 

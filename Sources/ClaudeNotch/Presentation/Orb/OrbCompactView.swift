@@ -29,7 +29,7 @@ struct OrbCompactView: View {
                 VelionOrb(
                     size: max(14, notchHeight - 16),
                     glowIntensity: aggregateGlow,
-                    color: aggregateColor
+                    accent: aggregateColor
                 )
                 if activeCount > 0 {
                     Text("\(activeCount)")
@@ -56,11 +56,11 @@ struct OrbCompactView: View {
     private var aggregateColor: Color {
         switch store.state {
         case .populated(let active) where active.contains(where: { $0.status == .running }):
-            return Color(red: 0.96, green: 0.88, blue: 0.62)
+            return Color(red: 1.00, green: 0.80, blue: 0.35)
         case .populated(let active) where !active.isEmpty:
-            return Color(white: 0.92)
+            return Color(red: 0.30, green: 0.85, blue: 1.00)
         default:
-            return Color(white: 0.65)
+            return Color(red: 0.45, green: 0.65, blue: 0.85)
         }
     }
 
@@ -69,9 +69,9 @@ struct OrbCompactView: View {
         case .populated(let active) where active.contains(where: { $0.status == .running }):
             return 0.95
         case .populated(let active) where !active.isEmpty:
-            return 0.7
+            return 0.80
         default:
-            return 0.4
+            return 0.40
         }
     }
 

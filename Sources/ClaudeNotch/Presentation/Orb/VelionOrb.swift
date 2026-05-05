@@ -1,57 +1,57 @@
 // VelionOrb.swift
-// The signature visual of the app. A breathing silver-white sphere whose
-// aesthetic borrows from the Velion brand — a winged figure inside a circle,
-// minimalist, ethereal, suggestive of "ascend".
+// The signature visual of the app — a tech / futurist orb. Reads as a
+// compact arc-reactor or holographic core rather than a soft glass marble.
 //
-// Composition:
-//   1. Outer halo: blurred radial gradient that fades into transparency,
-//      gives the ambient "presence" without a hard edge.
-//   2. Body: radial gradient with the highlight off-center toward the upper
-//      left, simulating a soft top-light specular.
-//   3. Specular dot: a tighter highlight ring that catches the eye like a
-//      beveled glass rim.
-//   4. Wing rings: three concentric strokes at decreasing opacity that nod to
-//      the V-wing inside the Velion logo without being literal.
+// Composition (back to front):
+//   1. Outer glow:   electric cyan halo, blurred. Pulses with audio.
+//   2. Tilted rings: two geometric rings on perpendicular axes, slowly
+//                    rotating in opposite directions. Suggests an orbital /
+//                    atomic structure, not concentric ripples.
+//   3. Core sphere:  deep navy → bright cyan radial gradient with a sharp
+//                    inner highlight. Flat-ish on the edges so the silhouette
+//                    reads as solid, not foggy.
+//   4. Energy seams: two thin arcs (top + bottom) that scan around the core
+//                    every few seconds, like a holographic interface tracing.
+//   5. Specular dot: small, hot-white, top-left.
 //
 // Animation:
-//   - A slow breath driven by `TimelineView(.animation)` modulates the body
-//     scale by ~4%. Continuous, does not require external state.
-//   - `pulseAmplitude` is the hook for amplitude-driven lip-sync (Phase 4):
-//     pass the audio RMS [0..1] and the orb hits an extra ~15% scale + the
-//     wing rings visibly ripple outward.
+//   - Continuous rotation of the geometric rings (TimelineView, 60 fps).
+//   - `pulseAmplitude` (0..1) blooms the glow and pushes the rings outward
+//     when the avatar is speaking — wired in Phase 4.
 //
-// The orb is purely cosmetic — interactivity (click, hover) is handled by
-// containers (OrbView, OrbCompactView). This view never decides anything.
+// Coloring:
+//   - `accent`: the dominant tone of the orb (default electric cyan-blue).
+//     Phases 2+ will swap this per session/state (gold for running, etc).
 import SwiftUI
 
 struct VelionOrb: View {
-    /// Visual diameter of the orb body in points. Halo extends ~1.6× this.
+    /// Visual diameter of the core sphere in points.
     var size: CGFloat = 140
 
-    /// 0..1. Drives the outer halo opacity. Idle ≈ 0.3, alive ≈ 0.7,
-    /// running session ≈ 0.9.
+    /// 0..1. Drives the outer halo intensity. Idle ≈ 0.4, alive ≈ 0.8.
     var glowIntensity: Double = 0.7
 
     /// 0..1. Audio RMS for lip-sync. Wired in Phase 4. Zero when not speaking.
     var pulseAmplitude: Double = 0.0
 
-    /// Body tint. Default Velion silver. Shifts toward gold-silver when a
-    /// session is running, toward dim silver when idle/empty.
-    var color: Color = Color(white: 0.88)
+    /// Dominant accent. Default electric cyan; per-state colors overridden by callers.
+    var accent: Color = Color(red: 0.30, green: 0.85, blue: 1.00)
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
-            // Slow breath — period ~4s. sin returns -1..1; remap to 0..1.
-            let breath = (sin(t * 0.5 * .pi / 2) + 1) / 2
             let pulse = max(0, min(1, pulseAmplitude))
-            let scale = 1.0 + (breath * 0.04) + (pulse * 0.15)
+            // Core breathing — much subtler than v1 so it reads as machine, not lung.
+            let breath = (sin(t * 0.6) + 1) / 2
+            let coreScale = 1.0 + breath * 0.015 + pulse * 0.10
 
             ZStack {
-                outerHalo(breath: breath, pulse: pulse)
-                wingRings(breath: breath, pulse: pulse)
-                body(scale: scale)
-                specular(scale: scale)
+                outerGlow(pulse: pulse, breath: breath)
+                tiltedRing(rotationOffset: t * 0.6, axis: .horizontal, pulse: pulse)
+                tiltedRing(rotationOffset: -t * 0.45, axis: .vertical, pulse: pulse)
+                core(scale: coreScale)
+                scanArcs(rotation: t * 1.2, pulse: pulse)
+                specular(scale: coreScale)
             }
             .frame(width: size * 1.7, height: size * 1.7)
         }
@@ -59,61 +59,100 @@ struct VelionOrb: View {
 
     // MARK: - Layers
 
-    private func outerHalo(breath: Double, pulse: Double) -> some View {
-        Circle()
+    private func outerGlow(pulse: Double, breath: Double) -> some View {
+        let opacity = 0.35 * glowIntensity + pulse * 0.40
+        return Circle()
             .fill(
                 RadialGradient(
                     colors: [
-                        color.opacity(0.30 * glowIntensity + pulse * 0.25),
-                        color.opacity(0.10 * glowIntensity),
-                        color.opacity(0)
+                        accent.opacity(opacity),
+                        accent.opacity(opacity * 0.4),
+                        accent.opacity(0)
                     ],
                     center: .center,
-                    startRadius: size * 0.25,
-                    endRadius: size * 0.85
+                    startRadius: size * 0.30,
+                    endRadius: size * 0.95
                 )
             )
             .frame(width: size * 1.7, height: size * 1.7)
-            .blur(radius: 14)
-            .scaleEffect(1.0 + breath * 0.03 + pulse * 0.05)
+            .blur(radius: 16)
+            .scaleEffect(1.0 + breath * 0.02 + pulse * 0.06)
     }
 
-    private func wingRings(breath: Double, pulse: Double) -> some View {
+    private enum RingAxis { case horizontal, vertical }
+
+    /// A geometric ring tilted on one axis to read as 3D orbit.
+    /// `rotationOffset` rotates the ring around its tilted axis to suggest motion.
+    private func tiltedRing(rotationOffset: Double, axis: RingAxis, pulse: Double) -> some View {
+        let strokeOpacity = 0.55 + pulse * 0.30
+        let radius = size * 0.62 + pulse * size * 0.05
+        return Ellipse()
+            .stroke(
+                LinearGradient(
+                    colors: [
+                        accent.opacity(strokeOpacity),
+                        accent.opacity(strokeOpacity * 0.20),
+                        accent.opacity(strokeOpacity)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                lineWidth: 1.2
+            )
+            .frame(
+                width: axis == .horizontal ? radius * 2 : radius * 0.4,
+                height: axis == .horizontal ? radius * 0.4 : radius * 2
+            )
+            .rotationEffect(.radians(rotationOffset))
+            .blur(radius: 0.4)
+    }
+
+    private func core(scale: Double) -> some View {
         ZStack {
-            ForEach(0..<3, id: \.self) { i in
-                wingRing(index: i, breath: breath, pulse: pulse)
-            }
+            // Core fill — deep navy at edges, bright cyan-white core.
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            Color.white.opacity(0.95),
+                            accent.opacity(0.95),
+                            accent.opacity(0.55),
+                            Color(red: 0.05, green: 0.10, blue: 0.20).opacity(0.95)
+                        ],
+                        center: UnitPoint(x: 0.40, y: 0.35),
+                        startRadius: 0,
+                        endRadius: size * 0.55
+                    )
+                )
+                .frame(width: size, height: size)
+                .scaleEffect(scale)
+                .shadow(color: accent.opacity(0.55), radius: size * 0.10, x: 0, y: 0)
+
+            // Crisp rim — gives the silhouette its tech-edge.
+            Circle()
+                .stroke(accent.opacity(0.90), lineWidth: 1.0)
+                .frame(width: size, height: size)
+                .scaleEffect(scale)
+                .blur(radius: 0.3)
         }
     }
 
-    private func wingRing(index i: Int, breath: Double, pulse: Double) -> some View {
-        let baseOpacity = 0.18 - Double(i) * 0.05
-        let ringScale = 1.0 + Double(i) * 0.07
-        let stepAmount = Double(i + 1)
-        let dynamicScale = 1.0 + breath * 0.02 * stepAmount + pulse * 0.04 * stepAmount
-        return Circle()
-            .stroke(color.opacity(baseOpacity + pulse * 0.15), lineWidth: 0.6)
-            .frame(width: size * ringScale, height: size * ringScale)
-            .scaleEffect(dynamicScale)
-    }
+    /// Two thin arcs that scan around the core. They sit just outside the rim
+    /// and rotate slowly, like a HUD readout circling the core.
+    private func scanArcs(rotation: Double, pulse: Double) -> some View {
+        let radius = size * 0.55
+        return ZStack {
+            ArcShape(startAngle: .degrees(20), endAngle: .degrees(70))
+                .stroke(accent.opacity(0.85 + pulse * 0.10), lineWidth: 1.4)
+                .frame(width: radius * 2, height: radius * 2)
+                .rotationEffect(.radians(rotation))
 
-    private func body(scale: Double) -> some View {
-        Circle()
-            .fill(
-                RadialGradient(
-                    colors: [
-                        Color.white.opacity(0.95),
-                        color.opacity(0.95),
-                        color.opacity(0.6)
-                    ],
-                    center: UnitPoint(x: 0.35, y: 0.30),
-                    startRadius: 0,
-                    endRadius: size * 0.55
-                )
-            )
-            .frame(width: size, height: size)
-            .scaleEffect(scale)
-            .shadow(color: color.opacity(0.4), radius: size * 0.06, x: 0, y: 0)
+            ArcShape(startAngle: .degrees(200), endAngle: .degrees(250))
+                .stroke(accent.opacity(0.55 + pulse * 0.10), lineWidth: 1.0)
+                .frame(width: radius * 2, height: radius * 2)
+                .rotationEffect(.radians(rotation * 0.7))
+        }
+        .blur(radius: 0.3)
     }
 
     private func specular(scale: Double) -> some View {
@@ -121,17 +160,39 @@ struct VelionOrb: View {
             .fill(
                 RadialGradient(
                     colors: [
-                        Color.white.opacity(0.75),
+                        Color.white.opacity(0.85),
                         Color.white.opacity(0)
                     ],
                     center: .center,
                     startRadius: 0,
-                    endRadius: size * 0.10
+                    endRadius: size * 0.08
                 )
             )
-            .frame(width: size * 0.40, height: size * 0.40)
-            .offset(x: -size * 0.18, y: -size * 0.22)
+            .frame(width: size * 0.32, height: size * 0.32)
+            .offset(x: -size * 0.20, y: -size * 0.22)
             .scaleEffect(scale)
-            .blur(radius: 1.5)
+            .blur(radius: 1.2)
+    }
+}
+
+// MARK: - Arc shape helper
+
+/// Open arc (no fill, no closing line). Used for the scan lines around the core.
+private struct ArcShape: Shape {
+    var startAngle: Angle
+    var endAngle: Angle
+
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let radius = min(rect.width, rect.height) / 2
+        p.addArc(
+            center: center,
+            radius: radius,
+            startAngle: startAngle,
+            endAngle: endAngle,
+            clockwise: false
+        )
+        return p
     }
 }
