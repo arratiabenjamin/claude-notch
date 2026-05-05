@@ -77,11 +77,11 @@ final class AppController: NSObject, NSApplicationDelegate {
         static let useNotchModeExplicitlySet = "use_notch_mode_explicitly_set"
     }
 
-    private static let defaultPanelSize = NSSize(width: 320, height: 240)
+    private static let defaultPanelSize = NSSize(width: 320, height: 320)
     private static let defaultMargin: CGFloat = 16
-    /// Expanded "Dynamic Island" content size — slightly wider than the
-    /// legacy free-floating panel because we want a more deliberate drop-down.
-    private static let expandedContentSize = NSSize(width: 380, height: 480)
+    /// Expanded "Dynamic Island" content size. Square stage so the orb sits
+    /// centered with consistent orbit radius regardless of session count.
+    private static let expandedContentSize = NSSize(width: 320, height: 320)
     /// How long after the cursor leaves an expanded panel before collapsing back.
     private static let autoCollapseInterval: TimeInterval = 3.0
 
@@ -184,7 +184,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         cancelCollapseTimer()
         uninstallMouseMoveMonitor()
 
-        let view = CompactPanelView(notchHeight: notch.frame.height, notchWidth: notch.frame.width)
+        let view = OrbCompactView(notchHeight: notch.frame.height, notchWidth: notch.frame.width)
             .environmentObject(store)
         installContent(view, on: panel)
 
@@ -208,7 +208,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func transitionToExpanded(notch: NotchInfo, animated: Bool = true) {
         guard let panel else { return }
 
-        let view = SessionListView()
+        let view = OrbView()
             .environmentObject(store)
         installContent(view, on: panel)
 
@@ -237,7 +237,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         cancelCollapseTimer()
         uninstallMouseMoveMonitor()
 
-        let view = SessionListView()
+        let view = OrbView()
             .environmentObject(store)
         installContent(view, on: panel)
 
