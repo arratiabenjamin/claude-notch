@@ -31,6 +31,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     // MARK: - Owned state
 
     private let store = SessionStore()
+    private let speaker = AvatarSpeaker()
     private lazy var watcher: StateFileWatcher = {
         let dir = (NSHomeDirectory() as NSString)
             .appendingPathComponent(".claude")
@@ -89,6 +90,13 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        // Avatar voice is opt-in. Register defaults so first-launch users
+        // start muted, regardless of whether they ever visit Settings.
+        UserDefaults.standard.register(defaults: [
+            "avatar_muted": true,
+            "avatar_voice_lang": "es-MX"
+        ])
+        store.speaker = speaker
         buildStatusItem()
         buildPanel()
         wireWatcher()
@@ -186,6 +194,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
         let view = OrbCompactView(notchHeight: notch.frame.height, notchWidth: notch.frame.width)
             .environmentObject(store)
+            .environmentObject(speaker)
         installContent(view, on: panel)
 
         // The compact pill is pinned exactly on the notch. Disable drag.
@@ -210,6 +219,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
         let view = OrbView()
             .environmentObject(store)
+            .environmentObject(speaker)
         installContent(view, on: panel)
 
         panel.isMovableByWindowBackground = false
@@ -239,6 +249,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
         let view = OrbView()
             .environmentObject(store)
+            .environmentObject(speaker)
         installContent(view, on: panel)
 
         // Free-floating mode keeps the legacy v1.x affordances: drag to move,

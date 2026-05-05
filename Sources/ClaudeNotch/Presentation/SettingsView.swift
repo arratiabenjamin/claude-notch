@@ -46,6 +46,11 @@ struct SettingsView: View {
     @AppStorage("notify_on_multi_session") private var notifyOnMultiSession: Bool = true
     @AppStorage("use_notch_mode") private var useNotchMode: Bool = true
     @AppStorage("use_notch_mode_explicitly_set") private var useNotchModeExplicitlySet: Bool = false
+    /// Avatar voice is OPT-IN: user must toggle this on. Default = muted.
+    /// Stored as `avatar_muted` so the inverted UX (the toggle reads
+    /// "Activar avatar") is just a `!` away.
+    @AppStorage("avatar_muted") private var avatarMuted: Bool = true
+    @AppStorage("avatar_voice_lang") private var avatarVoiceLang: String = "es-MX"
 
     /// String-bound mirror of `thresholdSeconds` so the user can type freely
     /// without losing focus on every keystroke.
@@ -132,6 +137,29 @@ struct SettingsView: View {
                 Text("Off = only long turns trigger notifications.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
+            }
+
+            // Avatar voice
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle("Avatar de voz", isOn: Binding(
+                    get: { !avatarMuted },
+                    set: { avatarMuted = !$0 }
+                ))
+                Text("El orbe lee en voz alta el resumen cuando una sesión termina, con audio espacial 3D si tenés AirPods compatibles.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+
+                if !avatarMuted {
+                    Picker("Idioma", selection: $avatarVoiceLang) {
+                        Text("Español (México)").tag("es-MX")
+                        Text("Español (España)").tag("es-ES")
+                        Text("Español (Argentina)").tag("es-AR")
+                        Text("English (US)").tag("en-US")
+                    }
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 240)
+                    .padding(.top, 2)
+                }
             }
 
             Divider()

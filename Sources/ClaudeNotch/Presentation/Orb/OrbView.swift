@@ -16,6 +16,7 @@ import AppKit
 
 struct OrbView: View {
     @EnvironmentObject var store: SessionStore
+    @EnvironmentObject var speaker: AvatarSpeaker
     @AppStorage("use_notch_mode") private var useNotchMode: Bool = true
     @AppStorage("use_notch_mode_explicitly_set") private var useNotchModeExplicitlySet: Bool = false
 
@@ -78,6 +79,7 @@ struct OrbView: View {
                 VelionOrb(
                     size: bloomed ? centralOrbSizeBloomed : centralOrbSizeCollapsed,
                     glowIntensity: aggregateGlow,
+                    pulseAmplitude: speaker.amplitude,
                     accent: aggregateColor
                 )
                 .onTapGesture {
@@ -88,30 +90,33 @@ struct OrbView: View {
                 .accessibilityLabel(centralAccessibilityLabel)
 
                 if bloomed {
-                    ForEach(Array(activeSessions.enumerated()), id: \.element.id) { index, session in
-                        SatelliteOrb(
-                            session: session,
-                            size: satelliteSize,
-                            emphasized: hoveredId == session.id
-                        )
-                        .offset(satelliteOffset(for: index, total: activeSessions.count))
-                        .onHover { hovering in
-                            hoveredId = hovering ? session.id : nil
-                        }
-                        .onTapGesture {
-                            // Single tap focuses the terminal (most common action).
-                            if let cwd = session.cwd, !cwd.isEmpty {
-                                _ = TerminalLauncher.openOrFocus(cwd: cwd, pid: session.pid)
+                    ForEach(SpatialSlot.allCases, id: \.self) { slot in
+                        let sessionsInSlot = sessionsIn(slot: slot)
+                        let baseOffset = slotOffset(slot)
+                        ForEach(Array(sessionsInSlot.enumerated()), id: \.element.id) { stackIndex, session in
+                            SatelliteOrb(
+                                session: session,
+                                size: satelliteSize,
+                                emphasized: hoveredId == session.id
+                            )
+                            .offset(stackedOffset(base: baseOffset, stackIndex: stackIndex, stackTotal: sessionsInSlot.count))
+                            .onHover { hovering in
+                                hoveredId = hovering ? session.id : nil
                             }
+                            .onTapGesture {
+                                if let cwd = session.cwd, !cwd.isEmpty {
+                                    _ = TerminalLauncher.openOrFocus(cwd: cwd, pid: session.pid)
+                                }
+                            }
+                            .contextMenu {
+                                satelliteMenu(for: session)
+                            }
+                            .transition(
+                                .scale(scale: 0.1, anchor: .center)
+                                    .combined(with: .opacity)
+                            )
+                            .accessibilityLabel(session.displayName)
                         }
-                        .contextMenu {
-                            satelliteMenu(for: session)
-                        }
-                        .transition(
-                            .scale(scale: 0.1, anchor: .center)
-                                .combined(with: .opacity)
-                        )
-                        .accessibilityLabel(session.displayName)
                     }
                 }
 
@@ -307,13 +312,35 @@ struct OrbView: View {
         return "Claude Notch. \(count) sesiones activas. Tocá para expandir."
     }
 
-    /// Distribute `total` satellites evenly around a circle, starting at the top.
-    private func satelliteOffset(for index: Int, total: Int) -> CGSize {
-        guard total > 0 else { return .zero }
-        let angle = (Double(index) / Double(total)) * 2 * .pi - (.pi / 2)
-        return CGSize(
-            width: cos(angle) * orbitRadius,
-            height: sin(angle) * orbitRadius
-        )
+    /// Sessions assigned to `slot`, ordered deterministically (stable id sort).
+    private func sessionsIn(slot: SpatialSlot) -> [SessionState] {
+        let ids = Set(store.slots.ids(in: slot))
+        return activeSessions
+            .filter { ids.contains($0.id) }
+            .sorted { $0.id < $1.id }
+    }
+
+    /// Anchor position of a slot around the central orb. Front sits above the
+    /// orb, left and right sit on the horizontal axis.
+    private func slotOffset(_ slot: SpatialSlot) -> CGSize {
+        switch slot {
+        case .front: return CGSize(width: 0,                   height: -orbitRadius)
+        case .left:  return CGSize(width: -orbitRadius,        height: orbitRadius * 0.5)
+        case .right: return CGSize(width:  orbitRadius,        height: orbitRadius * 0.5)
+        }
+    }
+
+    /// When a slot holds more than one session, fan the satellites slightly
+    /// so they don't paint on top of each other. We keep the stacking compact
+    /// so the slot still reads as a single direction in audio space.
+    private func stackedOffset(base: CGSize, stackIndex: Int, stackTotal: Int) -> CGSize {
+        guard stackTotal > 1 else { return base }
+        let spread: CGFloat = CGFloat(satelliteSize) * 0.55
+        // Offset along a perpendicular axis so the stack lays sideways.
+        // Distribute symmetrically: index 0 at -((n-1)/2)*spread, n-1 at +((n-1)/2)*spread.
+        let centered = CGFloat(stackIndex) - CGFloat(stackTotal - 1) / 2
+        let dx = centered * spread * 0.6
+        let dy = centered * spread * -0.4
+        return CGSize(width: base.width + dx, height: base.height + dy)
     }
 }

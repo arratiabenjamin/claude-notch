@@ -47,6 +47,16 @@ final class SessionStore: ObservableObject {
     /// unbounded across sessions).
     private var manuallyEndedIds: Set<String> = []
 
+    /// Stable session-id → spatial-slot mapping. Slots are assigned at first
+    /// sight and held until the session goes away, so the user's brain (and
+    /// the spatial audio in Phase 5) get a consistent location per session.
+    let slots = SpatialSlotManager()
+
+    /// Avatar speaker that announces transitions (running → ended). The store
+    /// owns the trigger logic; the speaker owns the queue + audio plumbing.
+    /// Wired by AppController at startup.
+    var speaker: AvatarSpeaker?
+
     /// Apply a fresh data payload from the watcher. `data == nil` indicates the
     /// file was absent. `error` is non-nil when the watcher itself failed to
     /// read (e.g., directory missing).
@@ -138,6 +148,10 @@ final class SessionStore: ObservableObject {
             .filter { !manuallyEndedIds.contains($0.id) }
             .sorted(by: SessionStore.activeOrdering)
 
+        // Assign new sessions to slots; release slots whose sessions vanished.
+        for s in active { slots.assign(s.id) }
+        slots.prune(activeIds: Set(active.map { $0.id }))
+
         if active.isEmpty {
             state = .empty
             lastSuccessful = []
@@ -155,7 +169,42 @@ final class SessionStore: ObservableObject {
         lastSessionsForNotify = sessions
         Task { [weak self] in
             await NotificationService.shared.evaluate(previous: previous, current: sessions)
-            _ = self // capture-list noop to keep ARC happy without retain.
+            _ = self
+        }
+
+        // Announce sessions that just transitioned to .ended via the avatar.
+        // Capture slots BEFORE prune so a session that ends + disappears
+        // in the same tick still has a known direction for spatial audio.
+        announceTransitions(previous: previous, current: sessions)
+    }
+
+    /// Detect running/idle → ended transitions and dispatch summarized
+    /// announcements to the avatar speaker. Best-effort; failures degrade
+    /// silently (no crash, no UI impact).
+    private func announceTransitions(previous: [SessionState], current: [SessionState]) {
+        guard let speaker else { return }
+        let prevById = Dictionary(uniqueKeysWithValues: previous.map { ($0.id, $0) })
+        for s in current {
+            guard s.status == .ended else { continue }
+            guard let prev = prevById[s.id], prev.status != .ended else { continue }
+            let slot = slots.assignments[s.id] ?? slots.assign(s.id)
+            let path = s.transcriptPath
+            let name = s.displayName
+            let id = s.id
+            Task { [weak speaker] in
+                let summary = await TranscriptSummarizer.summarize(
+                    transcriptPath: path,
+                    sessionName: name
+                )
+                await MainActor.run {
+                    speaker?.enqueue(
+                        text: summary,
+                        slot: slot,
+                        sessionId: id,
+                        sessionName: name
+                    )
+                }
+            }
         }
     }
 

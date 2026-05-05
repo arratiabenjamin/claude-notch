@@ -12,6 +12,7 @@ import SwiftUI
 
 struct OrbCompactView: View {
     @EnvironmentObject var store: SessionStore
+    @EnvironmentObject var speaker: AvatarSpeaker
 
     /// Notch height in points (typically 32–37). Drives orb sizing.
     let notchHeight: CGFloat
@@ -29,6 +30,7 @@ struct OrbCompactView: View {
                 VelionOrb(
                     size: max(14, notchHeight - 16),
                     glowIntensity: aggregateGlow,
+                    pulseAmplitude: speaker.amplitude,
                     accent: aggregateColor
                 )
                 if activeCount > 0 {
