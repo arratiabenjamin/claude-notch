@@ -135,7 +135,7 @@ struct ExpandedSessionView: View {
             }
             if let cwd = session.cwd, !cwd.isEmpty {
                 ActionButton(label: "Terminal") {
-                    _ = TerminalLauncher.openOrFocus(cwd: cwd)
+                    _ = TerminalLauncher.openOrFocus(cwd: cwd, pid: session.pid)
                 }
             }
             Spacer(minLength: 0)

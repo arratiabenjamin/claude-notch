@@ -5,9 +5,18 @@
 //   - empty / fileMissing / dirMissing / error states (via EmptyStateView)
 //   - populated (ACTIVE + RECENTLY COMPLETED sections)
 import SwiftUI
+import AppKit
 
 struct SessionListView: View {
     @EnvironmentObject var store: SessionStore
+    @AppStorage("use_notch_mode") private var useNotchMode: Bool = true
+    @AppStorage("use_notch_mode_explicitly_set") private var useNotchModeExplicitlySet: Bool = false
+
+    /// Hardware notch present? Drives whether to show the mode-toggle button.
+    /// On non-notch Macs there's no second mode to toggle to.
+    private var hasNotchHardware: Bool {
+        (NSScreen.main?.safeAreaInsets.top ?? 0) > 0
+    }
 
     var body: some View {
         ZStack {
@@ -74,7 +83,32 @@ struct SessionListView: View {
                 .foregroundStyle(.primary)
             Spacer()
             counters
+            if hasNotchHardware {
+                modeToggleButton
+            }
         }
+    }
+
+    /// Toggle between notch mode (Dynamic Island pill) and free-floating window.
+    /// Same effect as the Settings toggle — flips `use_notch_mode` and posts
+    /// `.claudeNotchModeDidChange`, which AppController re-applies.
+    @ViewBuilder
+    private var modeToggleButton: some View {
+        Button {
+            useNotchMode.toggle()
+            useNotchModeExplicitlySet = true
+            NotificationCenter.default.post(name: .claudeNotchModeDidChange, object: nil)
+        } label: {
+            Image(systemName: useNotchMode
+                  ? "macwindow"                            // notch → detach to window
+                  : "rectangle.center.inset.filled")       // floating → pin to notch
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 18, height: 18)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(useNotchMode ? "Detach to floating window" : "Pin to notch")
     }
 
     @ViewBuilder
