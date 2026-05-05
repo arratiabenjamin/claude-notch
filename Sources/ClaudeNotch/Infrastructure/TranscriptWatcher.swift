@@ -97,12 +97,14 @@ final class TranscriptWatcher: ObservableObject {
             queue: DispatchQueue.global(qos: .utility)
         )
 
-        source.setEventHandler { [weak self] in
-            // Capture the path snapshot off the main actor; the actual reload
-            // hops back onto the main actor.
+        source.setEventHandler { [weak source, weak self] in
+            // Read `data` in the dispatch context (not main-isolated), then
+            // hop onto the main actor before touching anything on `self`.
+            // Capturing `self` here as @MainActor and using it from the dispatch
+            // queue trips Swift 6's `checkIsolated` runtime guard and crashes.
+            let data = source?.data ?? []
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                let data = source.data
                 if data.contains(.delete) || data.contains(.rename) || data.contains(.revoke) {
                     // File rotated or removed — drop the FD and let the safety
                     // timer reattach when (if) the file reappears.
@@ -113,11 +115,11 @@ final class TranscriptWatcher: ObservableObject {
             }
         }
 
-        source.setCancelHandler { [weak self] in
-            // Closing the FD is owned by `stop` / `detachSource`; nothing
-            // extra to do here, but this hook keeps the dispatch source happy.
-            _ = self
-        }
+        // No cancel handler. Anything that needs to clean up on cancel is
+        // already invoked synchronously inside `stop()` / `detachSource()`.
+        // Setting one that captures `self` (even as a no-op) trips Swift 6
+        // strict-concurrency `checkIsolated` when dispatch fires the cancel
+        // callout from a non-main queue.
 
         fileSource = source
         source.resume()
@@ -140,14 +142,18 @@ final class TranscriptWatcher: ObservableObject {
             deadline: .now() + Self.safetyInterval,
             repeating: Self.safetyInterval
         )
+        // Even though the timer fires on the main queue, Swift 6 strict
+        // concurrency requires us to enter the main actor explicitly before
+        // touching `self`. Without the `Task { @MainActor }` wrap, the
+        // dispatch context is not provably main-isolated and `checkIsolated`
+        // fails at runtime.
         timer.setEventHandler { [weak self] in
-            guard let self, let path = self.currentPath else { return }
-            // Re-attach if we lost the FD.
-            if self.fileSource == nil {
-                self.attachSource(path: path)
-            }
             Task { @MainActor [weak self] in
-                await self?.reload()
+                guard let self else { return }
+                if self.fileSource == nil, let path = self.currentPath {
+                    self.attachSource(path: path)
+                }
+                await self.reload()
             }
         }
         safetyTimer = timer
