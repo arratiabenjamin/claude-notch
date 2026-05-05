@@ -13,6 +13,9 @@
 // anything else — even with zero sessions, the orb still breathes (dimmer).
 import SwiftUI
 import AppKit
+import os.log
+
+private let log = Logger(subsystem: "com.velion.claude-notch", category: "orb-view")
 
 struct OrbView: View {
     @EnvironmentObject var store: SessionStore
@@ -26,10 +29,13 @@ struct OrbView: View {
     /// Currently hovered satellite session id, for the floating name label.
     @State private var hoveredId: String? = nil
 
-    /// True only on Macs with hardware notch — drives whether the mode toggle
-    /// button is shown.
+    /// True if ANY connected screen has a hardware notch. We deliberately
+    /// don't use `NSScreen.main` here — that returns the screen with the
+    /// current keyboard focus, which jumps to whatever external monitor
+    /// the user just clicked into. The result was the toggle button
+    /// flickering off whenever focus moved off the MacBook display.
     private var hasNotchHardware: Bool {
-        (NSScreen.main?.safeAreaInsets.top ?? 0) > 0
+        NSScreen.screens.contains { $0.safeAreaInsets.top > 0 }
     }
 
     /// Pixel-space dimensions of the inner stage. Halo extends past these bounds
@@ -209,8 +215,10 @@ struct OrbView: View {
     @ViewBuilder
     private var modeToggleButton: some View {
         Button {
+            log.info("modeToggleButton tapped, currentNotchMode=\(self.useNotchMode, privacy: .public) → flipping")
             useNotchMode.toggle()
             useNotchModeExplicitlySet = true
+            log.info("posting claudeNotchModeDidChange, newValue=\(self.useNotchMode, privacy: .public)")
             NotificationCenter.default.post(name: .claudeNotchModeDidChange, object: nil)
         } label: {
             Image(systemName: useNotchMode

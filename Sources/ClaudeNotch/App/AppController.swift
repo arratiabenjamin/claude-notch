@@ -94,7 +94,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         // start muted, regardless of whether they ever visit Settings.
         UserDefaults.standard.register(defaults: [
             "avatar_muted": true,
-            "avatar_voice_lang": "es-MX"
+            "avatar_voice_lang": "es-ES"
         ])
         store.speaker = speaker
         buildStatusItem()
@@ -252,8 +252,6 @@ final class AppController: NSObject, NSApplicationDelegate {
             .environmentObject(speaker)
         installContent(view, on: panel)
 
-        // Free-floating mode keeps the legacy v1.x affordances: drag to move,
-        // saved origin in defaults, normal floating level.
         panel.isMovableByWindowBackground = true
         panel.level = .floating
         panel.setFloatingChrome()
@@ -456,7 +454,12 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     @objc private func handleNotchModeDidChange(_ note: Notification) {
+        let useNotch = UserDefaults.standard.bool(forKey: Keys.useNotchMode)
+        let explicit = UserDefaults.standard.bool(forKey: Keys.useNotchModeExplicitlySet)
+        let detected = NotchDetector.detect() != nil
+        NSLog("[claude-notch] handleNotchModeDidChange: useNotch=\(useNotch) explicit=\(explicit) hardwareDetected=\(detected)")
         applyDefaultMode()
+        NSLog("[claude-notch] handleNotchModeDidChange: after applyDefaultMode, mode=\(String(describing: self.mode))")
     }
 
     // MARK: - Free-floating origin restoration (v1.x legacy path)

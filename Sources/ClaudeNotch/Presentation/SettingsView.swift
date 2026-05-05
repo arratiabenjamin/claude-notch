@@ -56,11 +56,13 @@ struct SettingsView: View {
     /// without losing focus on every keystroke.
     @State private var thresholdInput: String = ""
 
-    /// True when the user is on a Mac with a hardware notch (MacBook Pro 14"/16"
-    /// post-2021, MacBook Air post-2022). Drives whether we show the toggle at all.
+    /// True when ANY connected screen has a hardware notch. We check across
+    /// all screens (not `NSScreen.main`) because the latter follows keyboard
+    /// focus and was making the notch toggle flicker off whenever focus
+    /// landed on an external monitor.
     private var hasNotchHardware: Bool {
         if #available(macOS 12.0, *) {
-            return (NSScreen.main?.safeAreaInsets.top ?? 0) > 0
+            return NSScreen.screens.contains { $0.safeAreaInsets.top > 0 }
         }
         return false
     }

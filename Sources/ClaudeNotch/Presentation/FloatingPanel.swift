@@ -45,7 +45,13 @@ final class FloatingPanel: NSPanel {
         self.isReleasedWhenClosed = false
     }
 
-    override var canBecomeKey: Bool { false }
+    // Must be `true` so SwiftUI Buttons inside the panel receive mouseDown
+    // cleanly — combined with `isMovableByWindowBackground`, AppKit otherwise
+    // starts a window drag before the button can claim the event. The panel
+    // is `.nonactivatingPanel`, so the app itself never steals focus from
+    // whatever was frontmost (Terminal, the editor, etc.). Same pattern used
+    // by Raycast/Alfred-style accessory panels.
+    override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
     // MARK: - Notch-aware frame helpers
