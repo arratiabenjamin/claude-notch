@@ -39,6 +39,14 @@ final class SessionStore: ObservableObject {
     /// by NotificationService to detect running -> idle/ended transitions.
     private var lastSessionsForNotify: [SessionState] = []
 
+    /// Session IDs the user explicitly ended via the "End session" button.
+    /// We hide these from BOTH active and recent lists immediately — the user
+    /// just told us they're done with the row, ferrying it into RECENTLY
+    /// COMPLETED is just visual noise. Cleared lazily once the notifier has
+    /// dropped the id from active-sessions.json (so the set never grows
+    /// unbounded across sessions).
+    private var manuallyEndedIds: Set<String> = []
+
     /// Cap on RECENTLY COMPLETED rows; overflow is silent for v1.0.
     private static let recentCap = 5
 
@@ -90,6 +98,19 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    /// Hide a session from the panel right now. Called by the "End session"
+    /// button before sending SIGINT — the notifier will eventually update
+    /// active-sessions.json, but we don't want the row to flash through
+    /// RECENTLY COMPLETED on the way out. The id is cleared from this set
+    /// once the producer has dropped it from the file payload entirely.
+    func markManuallyEnded(id: String) {
+        manuallyEndedIds.insert(id)
+        if expandedSessionId == id { expandedSessionId = nil }
+        // Re-derive immediately from cached bytes so the UI updates without
+        // waiting for the next FSEvent.
+        refreshNamesAndReingest()
+    }
+
     /// Re-load `customNames` from `~/.claude/sessions/` and re-decode the
     /// most recent active-sessions.json bytes. No-op if we never ingested
     /// any data yet. Triggered by the DirectoryWatcher on `/rename` events
@@ -114,14 +135,21 @@ final class SessionStore: ObservableObject {
         // are never disambiguated — that's the user's intent.
         let disambiguated = SessionStore.disambiguate(sessions)
 
+        // Drop any manually-ended ids that are no longer present in the
+        // payload at all — the notifier has caught up, we can stop tracking.
+        let presentIds = Set(disambiguated.map { $0.id })
+        manuallyEndedIds.formIntersection(presentIds)
+
         let now = Date()
         let active = disambiguated
             .filter { $0.status == .running || $0.status == .idle }
+            .filter { !manuallyEndedIds.contains($0.id) }
             .sorted(by: SessionStore.activeOrdering)
 
         let recent = disambiguated
             .filter { s in
                 guard s.status == .ended, let endedAt = s.endedAt else { return false }
+                if manuallyEndedIds.contains(s.id) { return false }
                 return now.timeIntervalSince(endedAt) <= SessionStore.recentWindow
             }
             .sorted { (a, b) in

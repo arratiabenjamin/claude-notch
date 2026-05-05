@@ -12,6 +12,7 @@ import AppKit
 struct ExpandedSessionView: View {
     let session: SessionState
 
+    @EnvironmentObject var store: SessionStore
     @StateObject private var watcher = TranscriptWatcher()
 
     var body: some View {
@@ -136,7 +137,13 @@ struct ExpandedSessionView: View {
             // Only enabled while there is still a process to interrupt.
             if let pid = session.pid, session.status != .ended {
                 ActionButton(label: "End session", role: .destructive) {
-                    _ = SessionTerminator.endSession(pid: pid)
+                    // SIGINT first so we never hide a row whose process is
+                    // still alive (EPERM/etc). On success, mark it locally so
+                    // the row disappears now instead of slipping through
+                    // RECENTLY COMPLETED while the producer flushes the file.
+                    if case .success = SessionTerminator.endSession(pid: pid) {
+                        store.markManuallyEnded(id: session.id)
+                    }
                 }
             }
         }
