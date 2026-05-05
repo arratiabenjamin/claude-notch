@@ -26,6 +26,7 @@
 // hop back via `await MainActor.run` before touching published state.
 import Foundation
 import AVFoundation
+import CoreAudio
 import Combine
 import os.log
 
@@ -53,7 +54,19 @@ final class AvatarSpeaker: ObservableObject {
     private let engine = AVAudioEngine()
     private let environment = AVAudioEnvironmentNode()
     private let player = AVAudioPlayerNode()
-    private var engineConfigured = false
+
+    /// Format negotiated on the first buffer we receive from TTS. Used to
+    /// re-connect the audio pipeline so it matches the synthesizer's output.
+    /// AVSpeechSynthesizer.write returns PCM in the voice's natural rate,
+    /// which is NOT always 22.05 kHz — Spanish enhanced voices on macOS 26
+    /// often render at 24 kHz. Locking the connection format up front leaves
+    /// the player silent.
+    private var connectedFormat: AVAudioFormat?
+
+    /// True when the active pipeline goes player → environment → main.
+    /// False when it bypasses the environment for direct stereo through
+    /// the speakers.
+    private var spatialActive: Bool = false
 
     private let synth = AVSpeechSynthesizer()
 
@@ -76,23 +89,26 @@ final class AvatarSpeaker: ObservableObject {
     }
 
     /// Preferred BCP-47 language for the voice. Empty → system pick.
+    /// Default es-ES because the highest-quality Spanish neural voice on
+    /// macOS 26 (Monica Premium) ships under that locale; es-MX/es-AR
+    /// usually only have Compact builds available.
     private var preferredVoiceLanguage: String {
         let stored = UserDefaults.standard.string(forKey: "avatar_voice_lang") ?? ""
-        return stored.isEmpty ? "es-MX" : stored
+        return stored.isEmpty ? "es-ES" : stored
     }
 
     // MARK: - Public API
 
     /// Enqueue an announcement for the given session. If something is
     /// already speaking, the utterance waits its turn (FIFO).
-    func enqueue(text: String, slot: SpatialSlot, sessionId: String, sessionName: String) {
+    /// `text` is what gets spoken verbatim — the caller decides whether to
+    /// prefix the session name (do that only when multiple sessions share
+    /// the same spatial slot, otherwise the direction alone identifies it).
+    func enqueue(text: String, slot: SpatialSlot, sessionId: String) {
         if muted { return }
-        let prefixed = needsNamePrefix(slot: slot, sessionId: sessionId)
-            ? "\(sessionName). \(text)"
-            : text
-        let u = Utterance(text: prefixed, slot: slot, sessionId: sessionId)
+        let u = Utterance(text: text, slot: slot, sessionId: sessionId)
         queue.append(u)
-        log.info("enqueued utterance for session=\(sessionId, privacy: .public) slot=\(slot.rawValue, privacy: .public) qLen=\(self.queue.count, privacy: .public)")
+        log.info("enqueued utterance for session=\(sessionId, privacy: .public) slot=\(slot.rawValue, privacy: .public) qLen=\(self.queue.count, privacy: .public) text=\(text.prefix(80), privacy: .public)")
         speakNextIfIdle()
     }
 
@@ -120,16 +136,30 @@ final class AvatarSpeaker: ObservableObject {
     }
 
     /// Render `utterance.text` to PCM via AVSpeechSynthesizer, push the
-    /// resulting buffers into the spatialized player node, and resolve when
-    /// playback finishes. On any failure we degrade silently and pop to the
-    /// next utterance so a hung voice can never wedge the queue.
+    /// resulting buffers into the player node, and resolve when playback
+    /// finishes. On any failure we degrade silently and pop to the next
+    /// utterance so a hung voice can never wedge the queue.
+    ///
+    /// The pipeline is reconfigured per-utterance based on the current
+    /// output device:
+    ///   • Headphones (any kind) → player → environment → main, HRTF on,
+    ///     audible spatial separation per slot.
+    ///   • Built-in speakers / external speakers → player → main, plain
+    ///     stereo. Still spatializes via L/R balance from `position(slot:)`,
+    ///     but no HRTF (which can mute audio on speakers in some configs).
     private func render(_ utterance: Utterance) async {
-        await ensureEngine(running: true)
-        position(slot: utterance.slot)
+        let useSpatial = isHeadphonesActive()
+        log.info("render slot=\(utterance.slot.rawValue, privacy: .public) spatial=\(useSpatial, privacy: .public)")
 
         let speech = AVSpeechUtterance(string: utterance.text)
-        if let voice = preferredVoice() { speech.voice = voice }
-        speech.rate = AVSpeechUtteranceDefaultSpeechRate
+        if let voice = preferredVoice() {
+            speech.voice = voice
+            log.info("voice=\(voice.identifier, privacy: .public) lang=\(voice.language, privacy: .public)")
+        }
+        // 92% of default speech rate — perceptibly slower without sounding
+        // dragged. The default rate is too fast for an announcement that
+        // wants to be understood from across the room.
+        speech.rate = AVSpeechUtteranceDefaultSpeechRate * 0.92
         speech.pitchMultiplier = 1.0
         speech.preUtteranceDelay = 0.05
 
@@ -152,22 +182,102 @@ final class AvatarSpeaker: ObservableObject {
                 }
                 Task { @MainActor [weak self] in
                     self?.publishAmplitude(pcm)
+                    self?.scheduleBuffer(pcm, useSpatial: useSpatial, slot: utterance.slot)
                 }
-                self.scheduleBuffer(pcm)
             }
         }
     }
 
-    private func scheduleBuffer(_ buffer: AVAudioPCMBuffer) {
-        // Player needs to be playing before scheduling. Cheap to call repeatedly.
+    /// Schedule a TTS buffer for playback. Lazily starts the engine, builds
+    /// or rebuilds the pipeline at the buffer's actual format, and starts
+    /// the player.
+    private func scheduleBuffer(_ buffer: AVAudioPCMBuffer, useSpatial: Bool, slot: SpatialSlot) {
+        ensureEnginePipeline(matching: buffer.format, useSpatial: useSpatial)
+        if useSpatial { position(slot: slot) }
+
+        if !engine.isRunning {
+            do {
+                try engine.start()
+                log.info("engine started")
+            } catch {
+                log.error("engine.start failed: \(error.localizedDescription, privacy: .public)")
+                return
+            }
+        }
         if !player.isPlaying { player.play() }
-        // Convert to engine's format if necessary. AVSpeechSynthesizer.write
-        // returns Float32 in the synthesizer's natural rate (typically 22050 Hz).
-        // Foundation does the resampling for us when we connect through the
-        // environment node configured at the engine output rate, so we can
-        // schedule directly here. If formats really diverge, AVAudioConverter
-        // is the right escape hatch — Phase 5.5 if it ever bites.
         player.scheduleBuffer(buffer, completionHandler: nil)
+    }
+
+    /// Build or rebuild the engine graph so it matches the incoming buffer
+    /// format. Reconnect when the format or routing (spatial vs flat)
+    /// changes — silently no-ops when nothing changed.
+    private func ensureEnginePipeline(matching bufferFormat: AVAudioFormat, useSpatial: Bool) {
+        let formatChanged = connectedFormat?.sampleRate != bufferFormat.sampleRate
+            || connectedFormat?.channelCount != bufferFormat.channelCount
+        let routingChanged = spatialActive != useSpatial
+        let neverConfigured = player.engine == nil
+
+        guard formatChanged || routingChanged || neverConfigured else { return }
+
+        // Detach + re-attach to wipe any previous graph state.
+        if player.engine != nil { engine.detach(player) }
+        if environment.engine != nil { engine.detach(environment) }
+
+        engine.attach(player)
+        if useSpatial {
+            engine.attach(environment)
+            engine.connect(player, to: environment, format: bufferFormat)
+            engine.connect(environment, to: engine.mainMixerNode, format: nil)
+            environment.renderingAlgorithm = .HRTF
+            environment.outputType = .headphones
+            environment.distanceAttenuationParameters.referenceDistance = 0.5
+            environment.distanceAttenuationParameters.maximumDistance = 5.0
+            environment.listenerPosition = AVAudio3DPoint(x: 0, y: 0, z: 0)
+            environment.listenerAngularOrientation = AVAudio3DAngularOrientation(yaw: 0, pitch: 0, roll: 0)
+        } else {
+            engine.connect(player, to: engine.mainMixerNode, format: bufferFormat)
+        }
+
+        connectedFormat = bufferFormat
+        spatialActive = useSpatial
+        log.info("pipeline rebuilt: spatial=\(useSpatial, privacy: .public) sampleRate=\(bufferFormat.sampleRate, privacy: .public) channels=\(bufferFormat.channelCount, privacy: .public)")
+    }
+
+    /// Best-effort detection of whether the current output route is
+    /// headphones / AirPods / Bluetooth audio (anything where HRTF makes
+    /// sense). On macOS, the AVAudioSession API isn't available — we use
+    /// CoreAudio default-output-device transport type instead.
+    private func isHeadphonesActive() -> Bool {
+        var defaultOutput: AudioDeviceID = 0
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &addr, 0, nil, &size, &defaultOutput
+        ) == noErr else { return false }
+
+        var transport: UInt32 = 0
+        size = UInt32(MemoryLayout<UInt32>.size)
+        addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        guard AudioObjectGetPropertyData(
+            defaultOutput, &addr, 0, nil, &size, &transport
+        ) == noErr else { return false }
+
+        // Only Bluetooth output (AirPods, BT headphones) gets the HRTF
+        // path. Wired headphones and external speakers go through the
+        // flat-stereo path because we can't distinguish them reliably and
+        // HRTF over speakers sounds wrong. AirPods + head tracking is the
+        // only configuration where 3D buys the user something dramatic.
+        return transport == kAudioDeviceTransportTypeBluetooth
+            || transport == kAudioDeviceTransportTypeBluetoothLE
     }
 
     @MainActor
@@ -199,60 +309,37 @@ final class AvatarSpeaker: ObservableObject {
         player.position = pos
     }
 
-    // MARK: - Engine setup
-
-    /// Idempotently configure the engine: player → environment → output.
-    /// We don't auto-start because that prompts for microphone privileges
-    /// in some sandbox configurations; we start lazily when needed.
-    private func ensureEngine(running: Bool) async {
-        if !engineConfigured { configureEngine() }
-        guard running else { return }
-        if !engine.isRunning {
-            do {
-                try engine.start()
-            } catch {
-                log.error("engine.start failed: \(error.localizedDescription, privacy: .public)")
-            }
-        }
-    }
-
-    private func configureEngine() {
-        engineConfigured = true
-        let format = AVAudioFormat(standardFormatWithSampleRate: 22_050, channels: 1)
-
-        engine.attach(environment)
-        engine.attach(player)
-
-        // Player is mono (TTS is mono); environment node spatializes to stereo.
-        engine.connect(player, to: environment, format: format)
-        engine.connect(environment, to: engine.mainMixerNode, format: nil)
-
-        environment.renderingAlgorithm = .HRTF
-        environment.distanceAttenuationParameters.maximumDistance = 5.0
-        environment.distanceAttenuationParameters.referenceDistance = 0.5
-        environment.outputType = .headphones
-
-        // The listener stays at the origin facing forward.
-        environment.listenerPosition = AVAudio3DPoint(x: 0, y: 0, z: 0)
-        environment.listenerAngularOrientation = AVAudio3DAngularOrientation(
-            yaw: 0, pitch: 0, roll: 0
-        )
-    }
-
     // MARK: - Voice selection
 
     private func preferredVoice() -> AVSpeechSynthesisVoice? {
         let lang = preferredVoiceLanguage
-        // Prefer enhanced/premium voices when available — they're noticeably
-        // less robotic and the file is already cached on the system.
-        let candidates = AVSpeechSynthesisVoice.speechVoices()
-            .filter { $0.language == lang || $0.language.hasPrefix(String(lang.prefix(2))) }
-            .sorted { lhs, rhs in
-                let lq = lhs.quality.rawValue
-                let rq = rhs.quality.rawValue
-                return lq > rq
+        let allSpanish = AVSpeechSynthesisVoice.speechVoices()
+            .filter {
+                $0.language == lang ||
+                $0.language.hasPrefix(String(lang.prefix(2)))
             }
-        return candidates.first ?? AVSpeechSynthesisVoice(language: lang)
+
+        // Strong preference for hand-picked neural voices when present —
+        // Apple's highest-quality Spanish offerings on macOS 26.
+        let preferredIdentifiers = [
+            "com.apple.voice.premium.es-ES.Monica",
+            "com.apple.voice.enhanced.es-ES.Monica",
+            "com.apple.voice.premium.es-MX.Paulina",
+            "com.apple.voice.enhanced.es-MX.Paulina",
+            "com.apple.voice.premium.es-ES.Jorge",
+            "com.apple.voice.enhanced.es-ES.Jorge"
+        ]
+        for id in preferredIdentifiers {
+            if let v = allSpanish.first(where: { $0.identifier == id }) {
+                return v
+            }
+        }
+
+        // Fallback: any Spanish voice, sorted by quality (premium > enhanced > default).
+        let sorted = allSpanish.sorted { lhs, rhs in
+            lhs.quality.rawValue > rhs.quality.rawValue
+        }
+        return sorted.first ?? AVSpeechSynthesisVoice(language: lang)
     }
 
     // MARK: - Amplitude analysis
@@ -274,18 +361,4 @@ final class AvatarSpeaker: ObservableObject {
         amplitude = scaled
     }
 
-    // MARK: - Multi-session-per-slot prefix
-
-    /// True when more than one session is mapped to the same slot, so the
-    /// utterance should announce *which* session it's about. The slot info
-    /// is canonical (SpatialSlotManager) but we don't have a direct ref
-    /// here — caller passes the slot, and the queue treats every utterance
-    /// as needing a prefix when in doubt. Heuristic: prefix any time we're
-    /// the second+ utterance for the slot in the visible queue.
-    private func needsNamePrefix(slot: SpatialSlot, sessionId: String) -> Bool {
-        // Always prefix; the announcement reads more naturally with a name
-        // anyway, and we don't have a cheap way to know slot-stack count
-        // from inside the queue. Cost is one extra word per announcement.
-        true
-    }
 }

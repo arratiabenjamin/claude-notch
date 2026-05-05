@@ -178,34 +178,123 @@ final class SessionStore: ObservableObject {
         announceTransitions(previous: previous, current: sessions)
     }
 
-    /// Detect running/idle → ended transitions and dispatch summarized
-    /// announcements to the avatar speaker. Best-effort; failures degrade
-    /// silently (no crash, no UI impact).
+    /// Detect transitions worth announcing on the avatar:
+    ///   • running/idle → ended (explicit close)
+    ///   • running/idle → vanished from payload (SIGINT close where the
+    ///     producer removes the entry instead of writing status=ended)
+    ///   • running → idle for turns LONGER than `notify_threshold_s`
+    ///     (Claude finished a long task and is back to waiting; the avatar
+    ///     announces what happened so the user doesn't have to switch
+    ///     contexts to find out)
+    ///
+    /// Short turns (under threshold) are intentionally silent — speaking
+    /// every five seconds during a quick back-and-forth would be torture.
+    /// `previous` is the last full snapshot we saw; `current` is the new
+    /// snapshot we just decoded.
     private func announceTransitions(previous: [SessionState], current: [SessionState]) {
         guard let speaker else { return }
         let prevById = Dictionary(uniqueKeysWithValues: previous.map { ($0.id, $0) })
+        let currentIds = Set(current.map { $0.id })
+
+        // Case A: explicit ended transition.
         for s in current {
             guard s.status == .ended else { continue }
             guard let prev = prevById[s.id], prev.status != .ended else { continue }
-            let slot = slots.assignments[s.id] ?? slots.assign(s.id)
-            let path = s.transcriptPath
-            let name = s.displayName
-            let id = s.id
-            Task { [weak speaker] in
-                let summary = await TranscriptSummarizer.summarize(
-                    transcriptPath: path,
-                    sessionName: name
+            announce(session: s, kind: .ended)
+        }
+
+        // Case B: silent vanish — a previously running/idle session is no
+        // longer in the payload at all.
+        for prev in previous {
+            guard prev.status == .running || prev.status == .idle else { continue }
+            guard !currentIds.contains(prev.id) else { continue }
+            announce(session: prev, kind: .ended)
+        }
+
+        // Case C: long-turn completion (running → idle, duration ≥ threshold).
+        let threshold = UserDefaults.standard.double(forKey: "notify_threshold_s")
+        let effectiveThreshold = threshold > 0 ? threshold : 90.0
+        for s in current {
+            guard s.status == .idle else { continue }
+            guard let prev = prevById[s.id], prev.status == .running else { continue }
+            guard let dur = s.lastTurnDurationS, Double(dur) >= effectiveThreshold else { continue }
+            announce(session: s, kind: .turnCompleted)
+        }
+    }
+
+    /// What kind of announcement we're dispatching. Drives whether the
+    /// avatar uses the close-of-session phrasing or the turn-finished one.
+    private enum AnnouncementKind {
+        case ended
+        case turnCompleted
+    }
+
+    /// Resolve slot, kick off the summarizer, and enqueue the utterance.
+    /// Captures the slot synchronously so a prune that lands during the
+    /// async summary still has a stable direction for spatial audio.
+    ///
+    /// Name prefix is added ONLY when there's another session already in
+    /// the same slot — the audio direction alone identifies the session
+    /// when it's solo, so prefixing every announcement was redundant noise
+    /// (and also doubled up with fallback summaries that already include
+    /// the name).
+    private func announce(session s: SessionState, kind: AnnouncementKind) {
+        guard let speaker else { return }
+        let slot = slots.assignments[s.id] ?? slots.assign(s.id)
+        let needsPrefix = slots.ids(in: slot).filter({ $0 != s.id }).count >= 1
+        let path = s.transcriptPath
+        let name = s.displayName
+        let id = s.id
+        let duration: Double? = {
+            switch kind {
+            case .ended:
+                guard let started = s.startedAt else { return nil }
+                let end = s.endedAt ?? Date()
+                let interval = end.timeIntervalSince(started)
+                return interval > 0 ? interval : nil
+            case .turnCompleted:
+                return s.lastTurnDurationS.map(Double.init)
+            }
+        }()
+        Task { [weak speaker] in
+            let summary = await TranscriptSummarizer.summarize(
+                transcriptPath: path,
+                sessionName: name,
+                kind: kind == .turnCompleted ? .turn : .session,
+                durationSeconds: duration
+            )
+            // Only strip a leading name when we're about to re-prefix it.
+            // If we're not prefixing (single session in slot), leave the
+            // summary intact — the fallback line includes the name on
+            // purpose so the user knows which one ended.
+            let final: String
+            if needsPrefix {
+                let stripped = stripLeadingName(summary, name: name)
+                final = "\(name). \(stripped)"
+            } else {
+                final = summary
+            }
+            await MainActor.run {
+                speaker?.enqueue(
+                    text: final,
+                    slot: slot,
+                    sessionId: id
                 )
-                await MainActor.run {
-                    speaker?.enqueue(
-                        text: summary,
-                        slot: slot,
-                        sessionId: id,
-                        sessionName: name
-                    )
-                }
             }
         }
+    }
+
+    /// Remove a leading "Name " or "Name." prefix from an already-summary
+    /// string so we never end up with double-prefixed announcements.
+    private func stripLeadingName(_ text: String, name: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        let lowerName = name.lowercased()
+        let lowerText = trimmed.lowercased()
+        guard lowerText.hasPrefix(lowerName) else { return trimmed }
+        let dropped = trimmed.dropFirst(name.count)
+        // Skip a separator char if there is one (".", " ", ":", etc).
+        let withoutSep = dropped.drop { ".:, ".contains($0) }
+        return String(withoutSep).trimmingCharacters(in: .whitespaces)
     }
 
     /// Drop the expanded id if it is not in the visible set.
