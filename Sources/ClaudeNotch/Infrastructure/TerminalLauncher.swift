@@ -6,7 +6,10 @@
 //      known terminal emulator (Terminal, Ghostty, iTerm2, Warp, WezTerm,
 //      kitty, alacritty, Hyper, Tabby). Activate that NSRunningApplication
 //      so the user lands on the exact window/tab where their session is.
-//   2. If we can't identify a terminal in the tree (or no pid), fall back to
+//   2. If `activate()` returns false (macOS 14+ may refuse cross-app focus
+//      stealing under some conditions), try NSWorkspace.shared.openApplication
+//      against the bundle URL as a stronger nudge.
+//   3. If we can't identify a terminal in the tree (or no pid), fall back to
 //      AppleScript on Terminal.app + cd into cwd (the v1.1 behavior).
 //
 // We deliberately do NOT try to focus a specific tab inside the terminal.
@@ -15,6 +18,9 @@
 // enough — the user's session is already visible inside it.
 import AppKit
 import Foundation
+import os.log
+
+private let log = Logger(subsystem: "com.velion.claude-notch", category: "terminal-launcher")
 
 enum TerminalError: Error, LocalizedError {
     case applescriptFailed(String)
@@ -63,11 +69,41 @@ enum TerminalLauncher {
     /// opening Terminal.app at `cwd`.
     @discardableResult
     static func openOrFocus(cwd: String, pid: Int? = nil) -> Result<Void, TerminalError> {
+        log.info("openOrFocus called pid=\(pid ?? -1, privacy: .public) cwd=\(cwd, privacy: .public)")
         if let pid, let app = findHostingTerminal(forPid: pid) {
-            app.activate(options: [.activateIgnoringOtherApps])
+            log.info("found hosting terminal: \(app.bundleIdentifier ?? "?", privacy: .public) name=\(app.localizedName ?? "?", privacy: .public)")
+            activate(app: app)
             return .success(())
         }
+        log.info("no hosting terminal in process tree, falling back to Terminal.app")
         return openInTerminalAppFallback(cwd: cwd)
+    }
+
+    /// Bring `app` to the front using the right API for the deployment target.
+    /// On macOS 14+ `activate(options:)` is deprecated; the documented
+    /// replacement is parameter-less `activate()`. macOS 26 (Tahoe) seems to
+    /// silently no-op the deprecated form for non-frontmost apps in some
+    /// cases — using the modern API restores reliable focus stealing.
+    /// If the activate call still reports false, kick the bundle URL through
+    /// NSWorkspace.openApplication as a stronger nudge.
+    private static func activate(app: NSRunningApplication) {
+        let activated: Bool
+        if #available(macOS 14.0, *) {
+            activated = app.activate()
+        } else {
+            activated = app.activate(options: [.activateIgnoringOtherApps])
+        }
+        log.info("activate returned \(activated, privacy: .public)")
+        if !activated, let url = app.bundleURL {
+            log.info("retrying via NSWorkspace.openApplication on \(url.path, privacy: .public)")
+            let cfg = NSWorkspace.OpenConfiguration()
+            cfg.activates = true
+            NSWorkspace.shared.openApplication(at: url, configuration: cfg) { _, err in
+                if let err {
+                    log.error("openApplication failed: \(err.localizedDescription, privacy: .public)")
+                }
+            }
+        }
     }
 
     // MARK: - Process-tree discovery

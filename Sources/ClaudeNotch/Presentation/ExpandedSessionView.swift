@@ -118,19 +118,11 @@ struct ExpandedSessionView: View {
     @ViewBuilder
     private var buttonsRow: some View {
         HStack(spacing: 6) {
-            ActionButton(label: "Copy ID") {
-                copyToPasteboard(session.id)
-            }
             if let cwd = session.cwd, !cwd.isEmpty {
                 ActionButton(label: "Reveal") {
                     NSWorkspace.shared.activateFileViewerSelecting(
                         [URL(fileURLWithPath: cwd)]
                     )
-                }
-            }
-            if let path = session.transcriptPath, !path.isEmpty {
-                ActionButton(label: "Open transcript") {
-                    NSWorkspace.shared.open(URL(fileURLWithPath: path))
                 }
             }
             if let cwd = session.cwd, !cwd.isEmpty {
@@ -139,6 +131,14 @@ struct ExpandedSessionView: View {
                 }
             }
             Spacer(minLength: 0)
+            // End-session lives at the right edge in destructive styling so
+            // it never gets clicked by accident on the way to a neighbor.
+            // Only enabled while there is still a process to interrupt.
+            if let pid = session.pid, session.status != .ended {
+                ActionButton(label: "End session", role: .destructive) {
+                    _ = SessionTerminator.endSession(pid: pid)
+                }
+            }
         }
     }
 
@@ -158,17 +158,15 @@ struct ExpandedSessionView: View {
         return max(1, size / 1024)
     }
 
-    private func copyToPasteboard(_ s: String) {
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(s, forType: .string)
-    }
 }
 
 // MARK: - ActionButton (small inline button, matches notch chrome)
 
 private struct ActionButton: View {
+    enum Role { case normal, destructive }
+
     let label: String
+    var role: Role = .normal
     let action: () -> Void
 
     @State private var hovering = false
@@ -177,16 +175,32 @@ private struct ActionButton: View {
         Button(action: action) {
             Text(label)
                 .font(.system(size: 10.5, weight: .medium))
-                .foregroundStyle(.primary)
+                .foregroundStyle(textColor)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(
                     RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(.white.opacity(hovering ? 0.18 : 0.10))
+                        .fill(fillColor)
                 )
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)
+    }
+
+    private var textColor: Color {
+        switch role {
+        case .normal:      return .primary
+        case .destructive: return .red
+        }
+    }
+
+    private var fillColor: Color {
+        switch role {
+        case .normal:
+            return .white.opacity(hovering ? 0.18 : 0.10)
+        case .destructive:
+            return .red.opacity(hovering ? 0.22 : 0.10)
+        }
     }
 }
