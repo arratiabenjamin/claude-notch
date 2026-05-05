@@ -114,17 +114,11 @@ struct SessionListView: View {
     @ViewBuilder
     private var counters: some View {
         switch store.state {
-        case .populated(let active, let recent):
-            HStack(spacing: 4) {
-                Text("\(active.count)")
-                    .monospacedDigit()
-                Text("·")
-                    .foregroundStyle(.tertiary)
-                Text("\(recent.count)")
-                    .monospacedDigit()
-            }
-            .font(.system(size: 11))
-            .foregroundStyle(.secondary)
+        case .populated(let active):
+            Text("\(active.count)")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
         default:
             EmptyView()
         }
@@ -181,21 +175,16 @@ struct SessionListView: View {
                 subtitle: "Update Claude Notch to read this state file."
             )
 
-        case .populated(let active, let recent):
-            populatedContent(active: active, recent: recent)
+        case .populated(let active):
+            populatedContent(active: active)
         }
     }
 
     @ViewBuilder
-    private func populatedContent(active: [SessionState], recent: [SessionState]) -> some View {
+    private func populatedContent(active: [SessionState]) -> some View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 14) {
-                if !active.isEmpty {
-                    section(title: "ACTIVE", rows: active)
-                }
-                if !recent.isEmpty {
-                    section(title: "RECENTLY COMPLETED", rows: recent)
-                }
+                section(title: "ACTIVE", rows: active)
             }
         }
     }

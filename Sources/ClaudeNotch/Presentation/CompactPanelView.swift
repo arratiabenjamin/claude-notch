@@ -41,14 +41,12 @@ struct CompactPanelView: View {
         .accessibilityLabel(accessibilityDescription)
     }
 
-    /// "" when nothing to show, "<active>" when no recent sessions,
-    /// "<active>·<recent>" otherwise. Tabular nums via `.monospacedDigit()`.
+    /// Active session count, or empty string when nothing to show.
+    /// Tabular nums via `.monospacedDigit()`.
     private var counter: String {
         switch store.state {
-        case .populated(let active, let recent):
-            if active.isEmpty && recent.isEmpty { return "" }
-            if recent.isEmpty { return "\(active.count)" }
-            return "\(active.count)·\(recent.count)"
+        case .populated(let active):
+            return active.isEmpty ? "" : "\(active.count)"
         default:
             return ""
         }
@@ -58,12 +56,10 @@ struct CompactPanelView: View {
     /// secondary otherwise. Mirrors the dot color logic in the expanded list.
     private var color: Color {
         switch store.state {
-        case .populated(let active, _) where active.contains(where: { $0.status == .running }):
+        case .populated(let active) where active.contains(where: { $0.status == .running }):
             return .yellow
-        case .populated(let active, _) where !active.isEmpty:
+        case .populated(let active) where !active.isEmpty:
             return .green
-        case .populated(_, let recent) where !recent.isEmpty:
-            return .secondary
         default:
             return .secondary
         }
@@ -71,8 +67,8 @@ struct CompactPanelView: View {
 
     private var accessibilityDescription: String {
         switch store.state {
-        case .populated(let active, let recent):
-            return "Claude Notch. \(active.count) active, \(recent.count) recent."
+        case .populated(let active):
+            return "Claude Notch. \(active.count) active."
         case .empty:
             return "Claude Notch. No sessions."
         case .loading:

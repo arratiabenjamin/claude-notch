@@ -8,7 +8,7 @@ import Combine
 enum UIState: Equatable {
     case loading
     case empty
-    case populated(active: [SessionState], recent: [SessionState])
+    case populated(active: [SessionState])
     case fileMissing
     case dirMissing
     case decodeError(String)
@@ -28,7 +28,7 @@ final class SessionStore: ObservableObject {
 
     /// Last successful populated render — kept so we can degrade gracefully
     /// when the file is mid-write (decode error) without flashing empty state.
-    private var lastSuccessful: (active: [SessionState], recent: [SessionState])?
+    private var lastSuccessful: [SessionState]?
 
     /// Last raw bytes successfully ingested. Cached so we can re-decode with
     /// an updated `customNames` map when `~/.claude/sessions/` changes (live
@@ -46,13 +46,6 @@ final class SessionStore: ObservableObject {
     /// dropped the id from active-sessions.json (so the set never grows
     /// unbounded across sessions).
     private var manuallyEndedIds: Set<String> = []
-
-    /// Cap on RECENTLY COMPLETED rows; overflow is silent for v1.0.
-    private static let recentCap = 5
-
-    /// Window of "recent" — only sessions that ended within this duration are
-    /// considered for the RECENT section. The producer already prunes >1h.
-    private static let recentWindow: TimeInterval = 24 * 60 * 60 // 24h
 
     /// Apply a fresh data payload from the watcher. `data == nil` indicates the
     /// file was absent. `error` is non-nil when the watcher itself failed to
@@ -89,7 +82,7 @@ final class SessionStore: ObservableObject {
             // flicker; just transition to .decodeError. The next FSEvent will
             // re-attempt and most likely recover.
             if let last = lastSuccessful {
-                state = .populated(active: last.active, recent: last.recent)
+                state = .populated(active: last)
             } else {
                 state = .decodeError(message)
             }
@@ -140,36 +133,19 @@ final class SessionStore: ObservableObject {
         let presentIds = Set(disambiguated.map { $0.id })
         manuallyEndedIds.formIntersection(presentIds)
 
-        let now = Date()
         let active = disambiguated
             .filter { $0.status == .running || $0.status == .idle }
             .filter { !manuallyEndedIds.contains($0.id) }
             .sorted(by: SessionStore.activeOrdering)
 
-        let recent = disambiguated
-            .filter { s in
-                guard s.status == .ended, let endedAt = s.endedAt else { return false }
-                if manuallyEndedIds.contains(s.id) { return false }
-                return now.timeIntervalSince(endedAt) <= SessionStore.recentWindow
-            }
-            .sorted { (a, b) in
-                let ai = a.endedAt ?? .distantPast
-                let bi = b.endedAt ?? .distantPast
-                return ai > bi
-            }
-            .prefix(SessionStore.recentCap)
-
-        let recentArray = Array(recent)
-
-        if active.isEmpty && recentArray.isEmpty {
+        if active.isEmpty {
             state = .empty
-            lastSuccessful = ([], [])
-            // Collapse expansion if the expanded session is gone.
+            lastSuccessful = []
             pruneExpansion(in: [])
         } else {
-            state = .populated(active: active, recent: recentArray)
-            lastSuccessful = (active, recentArray)
-            pruneExpansion(in: active + recentArray)
+            state = .populated(active: active)
+            lastSuccessful = active
+            pruneExpansion(in: active)
         }
 
         // Fire notifications based on running -> idle/ended transitions.
