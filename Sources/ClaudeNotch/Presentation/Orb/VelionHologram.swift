@@ -1,8 +1,22 @@
 // VelionHologram.swift
-// Holographic Velion orb for the screen saver — wireframe sphere + sigil
-// suspended in air, surrounded by HUD-style scan lines and a thin flicker.
-// Iron Man HUD reference, Velion palette (silver / white-neon / black,
-// no saturated cyan).
+// Holographic Velion orb — wireframe sphere + sigil suspended in air,
+// surrounded by HUD-style scan lines and a thin flicker. Iron Man HUD
+// reference, Velion palette (silver / white-neon / black, no saturated
+// cyan).
+//
+// Where it lives today:
+//   • Screen saver bundle (.saver) — renders fullscreen as ambient
+//     awareness on lock.
+//
+// Reserved for tomorrow:
+//   • Volumetric projection (Cheoptics360, Looking Glass, Pepper's
+//     ghost rig). The layer stack is intentionally line-art + alpha —
+//     no opaque sphere body, no fake shading — so it translates
+//     cleanly to a real 3D display when the hardware lands.
+//
+// The app panel currently uses the classic VelionOrb (cyan/amber arc-
+// reactor). When the projector is in place, we wire THIS view into the
+// panel and/or an external display.
 //
 // State is communicated by MOTION, not color:
 //   • .idle      → calm breathing + tiny lateral wiggle, faster flicker.

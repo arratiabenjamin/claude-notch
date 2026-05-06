@@ -26,8 +26,14 @@ struct OrbView: View {
     /// Whether the panel is showing satellites (true) or just the central orb (false).
     @State private var bloomed: Bool = false
 
-    /// Currently hovered satellite session id, for the floating name label.
+    /// Currently hovered satellite session id, for the preview bubble.
     @State private var hoveredId: String? = nil
+
+    /// Cached preview snapshots keyed by session id. Loaded lazily the first
+    /// time a satellite is hovered. Stale entries are not refreshed mid-hover
+    /// — the cache is invalidated when the session leaves the active list
+    /// (via `.onChange(of: store.state)` below).
+    @State private var previews: [String: SessionPreview] = [:]
 
     /// True if ANY connected screen has a hardware notch. We deliberately
     /// don't use `NSScreen.main` here — that returns the screen with the
@@ -82,9 +88,11 @@ struct OrbView: View {
 
             // Stage with the orb + satellites
             ZStack {
-                VelionHologram(
+                VelionOrb(
                     size: bloomed ? centralOrbSizeBloomed : centralOrbSizeCollapsed,
-                    mode: centralMode
+                    glowIntensity: aggregateGlow,
+                    pulseAmplitude: speaker.amplitude,
+                    accent: aggregateColor
                 )
                 .onTapGesture {
                     withAnimation(.spring(response: 0.55, dampingFraction: 0.78)) {
@@ -98,13 +106,15 @@ struct OrbView: View {
                         let sessionsInSlot = sessionsIn(slot: slot)
                         let baseOffset = slotOffset(slot)
                         ForEach(Array(sessionsInSlot.enumerated()), id: \.element.id) { stackIndex, session in
-                            VelionSatelliteHologram(
+                            SatelliteOrb(
+                                session: session,
                                 size: satelliteSize,
-                                mode: satelliteMode(for: session)
+                                emphasized: hoveredId == session.id
                             )
                             .offset(stackedOffset(base: baseOffset, stackIndex: stackIndex, stackTotal: sessionsInSlot.count))
                             .onHover { hovering in
                                 hoveredId = hovering ? session.id : nil
+                                if hovering { loadPreviewIfNeeded(for: session) }
                             }
                             .onTapGesture {
                                 if let cwd = session.cwd, !cwd.isEmpty {
@@ -123,15 +133,20 @@ struct OrbView: View {
                     }
                 }
 
-                // Hovered session name label, anchored bottom-center.
+                // Hovered session preview bubble, anchored bottom-center.
                 if let id = hoveredId,
                    let session = activeSessions.first(where: { $0.id == id }) {
                     VStack {
                         Spacer()
-                        sessionLabel(session)
+                        SatellitePreviewBubble(
+                            session: session,
+                            preview: previews[id]
+                        )
+                        .padding(.bottom, 14)
                     }
                     .frame(width: stageSize, height: stageSize)
                     .allowsHitTesting(false)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
 
                 // Empty-state caption, centered below the orb.
@@ -173,11 +188,31 @@ struct OrbView: View {
                         bloomed = false
                     }
                 }
+                // Drop preview cache entries for sessions that disappeared.
+                let activeIds = Set(active.map { $0.id })
+                previews = previews.filter { activeIds.contains($0.key) }
             } else if bloomed {
                 withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
                     bloomed = false
                 }
             }
+        }
+    }
+
+    /// Fire a one-shot async load when the user starts hovering a satellite.
+    /// Idempotent: if `previews[id]` already has a snapshot we keep it (no
+    /// re-read on every hover; the cache is invalidated when the session
+    /// drops out of the active list, see `.onChange(of: store.state)`).
+    private func loadPreviewIfNeeded(for session: SessionState) {
+        let id = session.id
+        if previews[id] != nil { return }
+        let path = session.transcriptPath
+        Task { @MainActor in
+            let snapshot = await SessionPreviewLoader.load(transcriptPath: path)
+            // Only commit if the user is still hovering this same satellite,
+            // OR has already moved on but might come back — we still keep
+            // the snapshot for next time.
+            previews[id] = snapshot ?? .empty
         }
     }
 
@@ -238,23 +273,6 @@ struct OrbView: View {
         .help(useNotchMode ? "Sacar a ventana flotante" : "Anclar al notch")
     }
 
-    private func sessionLabel(_ session: SessionState) -> some View {
-        Text(session.displayName)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(.primary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 5)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(Color.black.opacity(0.45))
-            )
-            .overlay(
-                Capsule(style: .continuous)
-                    .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
-            )
-            .padding(.bottom, 18)
-    }
-
     // MARK: - Derived state
 
     private var activeSessions: [SessionState] {
@@ -264,26 +282,30 @@ struct OrbView: View {
         return []
     }
 
-    /// Mode for the central hologram. Speaking takes priority (the avatar
-    /// is voicing a summary right now, the orb should react to its audio).
-    /// Otherwise, thinking iff any session is running, idle the rest of
-    /// the time. Brand palette is silver/white only — state is communicated
-    /// by motion, never by hue.
-    private var centralMode: VelionMode {
-        if speaker.amplitude > 0.01 {
-            return .speaking(amplitude: speaker.amplitude)
+    /// Aggregate orb tint:
+    /// - any running session  → warm amber (tool/work tone)
+    /// - idle but populated   → electric cyan (default tech accent)
+    /// - empty / loading      → cool desaturated cyan
+    private var aggregateColor: Color {
+        switch store.state {
+        case .populated(let active) where active.contains(where: { $0.status == .running }):
+            return Color(red: 1.00, green: 0.80, blue: 0.35)
+        case .populated(let active) where !active.isEmpty:
+            return Color(red: 0.30, green: 0.85, blue: 1.00)
+        default:
+            return Color(red: 0.45, green: 0.65, blue: 0.85)
         }
-        if activeSessions.contains(where: { $0.status == .running }) {
-            return .thinking
-        }
-        return .idle
     }
 
-    /// Mode for an individual satellite — running sessions pulse, idle ones
-    /// just wiggle. Hover doesn't switch the mode; the bubble overlay is
-    /// what shows that state to the user.
-    private func satelliteMode(for session: SessionState) -> VelionMode {
-        session.status == .running ? .thinking : .idle
+    private var aggregateGlow: Double {
+        switch store.state {
+        case .populated(let active) where active.contains(where: { $0.status == .running }):
+            return 0.95
+        case .populated(let active) where !active.isEmpty:
+            return 0.80
+        default:
+            return 0.40
+        }
     }
 
     private var emptyCaption: String {

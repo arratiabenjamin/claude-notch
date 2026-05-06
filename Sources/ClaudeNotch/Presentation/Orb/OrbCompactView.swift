@@ -27,9 +27,11 @@ struct OrbCompactView: View {
 
             HStack(spacing: 4) {
                 Spacer(minLength: 0)
-                VelionSatelliteHologram(
+                VelionOrb(
                     size: max(14, notchHeight - 16),
-                    mode: compactMode
+                    glowIntensity: aggregateGlow,
+                    pulseAmplitude: speaker.amplitude,
+                    accent: aggregateColor
                 )
                 if activeCount > 0 {
                     Text("\(activeCount)")
@@ -53,19 +55,26 @@ struct OrbCompactView: View {
         return 0
     }
 
-    /// Compact orb mode. Same priority order as the expanded panel:
-    /// speaking > thinking > idle. The compact orb is tiny on the notch
-    /// so the difference between idle and thinking matters mostly via the
-    /// pulsing scale, not via halo strength.
-    private var compactMode: VelionMode {
-        if speaker.amplitude > 0.01 {
-            return .speaking(amplitude: speaker.amplitude)
+    private var aggregateColor: Color {
+        switch store.state {
+        case .populated(let active) where active.contains(where: { $0.status == .running }):
+            return Color(red: 1.00, green: 0.80, blue: 0.35)
+        case .populated(let active) where !active.isEmpty:
+            return Color(red: 0.30, green: 0.85, blue: 1.00)
+        default:
+            return Color(red: 0.45, green: 0.65, blue: 0.85)
         }
-        if case .populated(let active) = store.state,
-           active.contains(where: { $0.status == .running }) {
-            return .thinking
+    }
+
+    private var aggregateGlow: Double {
+        switch store.state {
+        case .populated(let active) where active.contains(where: { $0.status == .running }):
+            return 0.95
+        case .populated(let active) where !active.isEmpty:
+            return 0.80
+        default:
+            return 0.40
         }
-        return .idle
     }
 
     private var accessibilityDescription: String {
