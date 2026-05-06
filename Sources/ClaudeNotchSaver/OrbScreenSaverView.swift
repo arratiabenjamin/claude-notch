@@ -2,16 +2,20 @@
 // Fullscreen SwiftUI canvas drawn by the .saver bundle.
 //
 // Layout:
-//   - Single Velion orb at the screen center, sized to the smaller axis.
-//   - One satellite per active session, in a slow circular orbit. Speed and
-//     glow scale with how "alive" the aggregate session pool is.
-//   - "Claude Notch" wordmark at the bottom — sutil; the orb is the show.
+//   - Central VelionHologram at the screen midpoint, sized to the smaller axis.
+//   - One VelionSatelliteHologram per active session, in slow circular orbit.
+//   - All session state is communicated by motion (idle / thinking modes),
+//     never by color — palette stays silver/white-on-black throughout.
+//   - Active count + "Claude Notch" wordmark anchored bottom-center.
 //
-// Polling-driven: the SaverSessionPoller refreshes ~/.claude/active-sessions.json
-// every 2.5s. We can't use FSEvents inside the legacyScreenSaver host process
-// (different lifecycle and sandbox), so polling at human-perceptible cadence
-// is the right call here.
+// Polling-driven: SaverSessionPoller refreshes /tmp/com.velion.claude-notch...
+// every 2.5s. We can't use FSEvents inside the legacyScreenSaver sandbox
+// (different lifecycle, restricted FS access), so polling at human-perceptible
+// cadence is the right call here.
 import SwiftUI
+import os.log
+
+private let log = Logger(subsystem: "com.velion.claude-notch.saver", category: "view")
 
 struct OrbScreenSaverView: View {
     @ObservedObject var poller: SaverSessionPoller
@@ -19,20 +23,19 @@ struct OrbScreenSaverView: View {
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                // Pitch-black background — gives the orb maximum contrast on
-                // OLED-ish displays and matches the lock-screen aesthetic.
                 Color.black.ignoresSafeArea()
 
                 let active = poller.sessions.filter { $0.status != .ended }
+                let _ = {
+                    log.info("render: total=\(poller.sessions.count, privacy: .public) active=\(active.count, privacy: .public) viewSize=\(Int(geo.size.width), privacy: .public)x\(Int(geo.size.height), privacy: .public)")
+                }()
                 let centralSize = min(geo.size.width, geo.size.height) * 0.22
-                let orbitRadius = centralSize * 1.55
-                let satelliteSize = centralSize * 0.36
+                let orbitRadius = centralSize * 1.85
+                let satelliteSize = centralSize * 0.40
 
-                VelionOrb(
+                VelionHologram(
                     size: centralSize,
-                    glowIntensity: aggregateGlow(active),
-                    pulseAmplitude: 0.0,
-                    accent: aggregateColor(active)
+                    mode: aggregateMode(active)
                 )
                 .position(x: geo.size.width / 2, y: geo.size.height / 2)
 
@@ -43,9 +46,9 @@ struct OrbScreenSaverView: View {
                         size: satelliteSize,
                         radius: orbitRadius,
                         startAngle: startAngle,
-                        speed: 0.10
+                        speed: 0.10,
+                        center: CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
                     )
-                    .position(x: geo.size.width / 2, y: geo.size.height / 2)
                 }
 
                 VStack(spacing: 6) {
@@ -66,20 +69,14 @@ struct OrbScreenSaverView: View {
         }
     }
 
-    private func aggregateColor(_ active: [SessionState]) -> Color {
-        if active.contains(where: { $0.status == .running }) {
-            return Color(red: 1.00, green: 0.80, blue: 0.35) // ámbar — laburando
-        }
-        if !active.isEmpty {
-            return Color(red: 0.30, green: 0.85, blue: 1.00) // cian — esperando
-        }
-        return Color(red: 0.45, green: 0.65, blue: 0.85)     // gris-cian — sin sesiones
-    }
-
-    private func aggregateGlow(_ active: [SessionState]) -> Double {
-        if active.contains(where: { $0.status == .running }) { return 0.95 }
-        if !active.isEmpty { return 0.70 }
-        return 0.40
+    /// Map aggregate session state → VelionMode for the central orb. State
+    /// is communicated by motion only (the palette is fixed silver/white):
+    ///   • any session running → .thinking (rhythmic scale pulse)
+    ///   • only idle sessions  → .idle (subtle wiggle, faster flicker)
+    ///   • no sessions         → .idle (same)
+    private func aggregateMode(_ active: [SessionState]) -> VelionMode {
+        if active.contains(where: { $0.status == .running }) { return .thinking }
+        return .idle
     }
 
     private func activeCountLabel(_ active: [SessionState]) -> String {
@@ -95,17 +92,25 @@ struct OrbScreenSaverView: View {
     }
 }
 
-/// A satellite orb on a circular orbit around the screen center. Wraps
-/// SatelliteOrb in a TimelineView-driven offset so the orbit advances every
-/// frame without us paying for AppKit-side animations.
+/// A holographic satellite on a circular orbit around an absolute screen
+/// center. Uses .position from inside the TimelineView so the satellite
+/// lands at an absolute point in the parent's coordinate space, regardless
+/// of how the parent stacks it.
 private struct OrbitingSatellite: View {
     let session: SessionState
     let size: CGFloat
     let radius: CGFloat
     let startAngle: Double
-    /// Radians per second. ~0.10 → one revolution every ~63s. Slow enough
-    /// to feel ambient, not distracting.
+    /// Radians per second. ~0.10 → one revolution every ~63s.
     let speed: Double
+    let center: CGPoint
+
+    /// Per-session mode. Running sessions get .thinking (pulsing scale) so
+    /// you can tell at a glance which sessions are working — same language
+    /// as the central orb, no color shift.
+    private var mode: VelionMode {
+        session.status == .running ? .thinking : .idle
+    }
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
@@ -113,8 +118,8 @@ private struct OrbitingSatellite: View {
             let angle = startAngle + t * speed
             let dx = cos(angle) * radius
             let dy = sin(angle) * radius
-            SatelliteOrb(session: session, size: size, emphasized: false)
-                .offset(x: dx, y: dy)
+            VelionSatelliteHologram(size: size, mode: mode)
+                .position(x: center.x + dx, y: center.y + dy)
         }
     }
 }
