@@ -19,6 +19,7 @@
 import AppKit
 import SwiftUI
 import Combine
+import Carbon.HIToolbox
 
 extension Notification.Name {
     /// Posted by SettingsView when the user flips the "Use notch as Dynamic Island"
@@ -49,6 +50,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var settingsWindow: NSWindow?
     private var statusItem: NSStatusItem?
     private var cancellables = Set<AnyCancellable>()
+    private let hotKeys = HotKeyManager()
 
     // Notch / Dynamic Island state
     private var mode: PanelMode = .hidden
@@ -103,6 +105,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         observeScreenChanges()
         observeSettingsChanges()
         installGlobalClickMonitor()
+        registerGlobalHotKey()
 
         // Notification authorization is LAZY (v1.3) — we ask the OS only
         // when we're about to post a real notification. See
@@ -534,8 +537,14 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func buildStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
-            // ◆ glyph keeps with the panel header chrome.
-            button.title = "◆"
+            button.title = ""
+            // Symbol + tint are refreshed live by `updateStatusBadge(for:)` on
+            // every store state change.
+            button.image = NSImage(
+                systemSymbolName: "circle",
+                accessibilityDescription: "Claude Notch"
+            )
+            button.image?.isTemplate = true
             button.toolTip = "Claude Notch"
         }
         let menu = NSMenu()
@@ -580,11 +589,63 @@ final class AppController: NSObject, NSApplicationDelegate {
         self.statusItem = item
     }
 
+    /// Repaint the menu-bar item to reflect the current session pool:
+    /// • cyan filled = sessions present, all idle
+    /// • amber filled (and a warmer halo) = at least one session running
+    /// • outline / secondary tint = no sessions / loading / error
+    /// Called from a Combine sink on `store.$state`.
+    private func updateStatusBadge(for state: UIState) {
+        guard let button = statusItem?.button else { return }
+
+        let symbol: String
+        let tint: NSColor?
+        let tooltip: String
+
+        switch state {
+        case .populated(let active) where active.contains(where: { $0.status == .running }):
+            symbol = "circle.fill"
+            tint = NSColor(srgbRed: 1.00, green: 0.78, blue: 0.30, alpha: 1.0)
+            let n = active.count
+            tooltip = "Claude Notch — \(n) " + (n == 1 ? "sesión, trabajando" : "sesiones, alguna trabajando")
+        case .populated(let active) where !active.isEmpty:
+            symbol = "circle.fill"
+            tint = NSColor(srgbRed: 0.30, green: 0.85, blue: 1.00, alpha: 1.0)
+            let n = active.count
+            tooltip = "Claude Notch — \(n) " + (n == 1 ? "sesión en espera" : "sesiones en espera")
+        default:
+            symbol = "circle"
+            tint = nil // fall back to default status-bar foreground
+            tooltip = "Claude Notch — sin sesiones activas"
+        }
+
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Claude Notch")
+        image?.isTemplate = (tint == nil) // template = follow system foreground
+        button.image = image
+        button.contentTintColor = tint
+        button.toolTip = tooltip
+    }
+
     @objc private func togglePanelMenu(_ sender: Any?) {
         if mode == .hidden {
             applyDefaultMode()
         } else {
             transitionToHidden()
+        }
+    }
+
+    /// Register ⌥⌘Space as the global show/hide toggle. Failure is silent —
+    /// the user always has the menu-bar item as a fallback. We log via NSLog
+    /// so the diagnostic shows up under the app's process even without the
+    /// os.Logger subsystem.
+    private func registerGlobalHotKey() {
+        let success = hotKeys.register(
+            keyCode: UInt32(kVK_Space),
+            modifiers: UInt32(cmdKey | optionKey)
+        ) { [weak self] in
+            self?.togglePanelMenu(nil)
+        }
+        if !success {
+            NSLog("[claude-notch] Global hotkey ⌥⌘Space NOT registered (already claimed?). Menu-bar toggle still works.")
         }
     }
 
@@ -678,5 +739,14 @@ final class AppController: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
 
         sessionNamesWatcher.start()
+
+        // Live menu-bar badge: tint the status item based on aggregate state
+        // (running / idle / empty). Fires once for the initial value too.
+        store.$state
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] state in
+                self?.updateStatusBadge(for: state)
+            }
+            .store(in: &cancellables)
     }
 }

@@ -72,10 +72,24 @@ final class NotificationService {
             // event the user actually cares about.
             guard await ensureAuthorizedLazily() else { continue }
 
+            // Body = the same Claude-authored / model-generated summary the
+            // avatar would speak. If summarization fails or produces only a
+            // neutral fallback, postNotification falls back to the seco
+            // duration + count line we used pre-v2.6.
+            let summaryKind: TranscriptSummarizer.Kind =
+                curr.status == .ended ? .session : .turn
+            let summary = await TranscriptSummarizer.summarize(
+                transcriptPath: curr.transcriptPath,
+                sessionName: curr.displayName,
+                kind: summaryKind,
+                durationSeconds: duration > 0 ? duration : nil
+            )
+
             await postNotification(
                 for: curr,
                 durationSeconds: Int(duration),
-                activeCount: activeCount
+                activeCount: activeCount,
+                summary: summary
             )
             lastNotifiedAt[id] = Date()
         }
@@ -126,11 +140,19 @@ final class NotificationService {
     private func postNotification(
         for session: SessionState,
         durationSeconds: Int,
-        activeCount: Int
+        activeCount: Int,
+        summary: String?
     ) async {
         let content = UNMutableNotificationContent()
         content.title = "Claude Code · \(session.displayName)"
-        content.body = "\(durationSeconds)s · \(activeCount) active session\(activeCount == 1 ? "" : "s")"
+        let metaLine = "\(durationSeconds)s · \(activeCount) " +
+                       (activeCount == 1 ? "sesión activa" : "sesiones activas")
+        if let summary, !summary.isEmpty {
+            content.subtitle = metaLine
+            content.body = summary
+        } else {
+            content.body = metaLine
+        }
         content.sound = .default
 
         let identifier = "session-\(session.id)-\(Int(Date().timeIntervalSince1970))"
