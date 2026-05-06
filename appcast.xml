@@ -1,0 +1,15 @@
+<?xml version="1.0" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>Claude Notch</title>
+        <item>
+            <title>2.7.0</title>
+            <pubDate>Wed, 06 May 2026 13:33:59 -0400</pubDate>
+            <link>https://github.com/arratiabenjamin/claude-notch</link>
+            <sparkle:version>270</sparkle:version>
+            <sparkle:shortVersionString>2.7.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/arratiabenjamin/claude-notch/releases/download/v2.7.0/ClaudeNotch-v2.7.0.zip" length="3109818" type="application/octet-stream" sparkle:edSignature="8y/Mm/vSQBrkesMUE7YLm3VMzUalOOg8m4ByN3+hGG2RA0f1He1vYktycXE23NzoYkjfBILI6+dsHTPpUhwHAA=="/>
+        </item>
+    </channel>
+</rss>

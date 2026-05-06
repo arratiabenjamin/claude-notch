@@ -5,6 +5,10 @@ options:
     macOS: "14.0"
   developmentLanguage: en
   createIntermediateGroups: true
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.6.0
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -22,22 +26,48 @@ targets:
     sources:
       - path: Sources/ClaudeNotch
       - path: Resources/Assets.xcassets
+    dependencies:
+      - package: Sparkle
+    info:
+      path: Resources/Info.plist
+      properties:
+        LSUIElement: false
+        NSPrincipalClass: NSApplication
+        CFBundleDisplayName: "Claude Notch"
+        CFBundleName: "Claude Notch"
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundlePackageType: APPL
+        CFBundleIconName: AppIcon
+        CFBundleIconFile: AppIcon
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        NSHumanReadableCopyright: "Copyright © 2026 Benjamín Arratia / Velion. MIT licensed."
+        NSUserNotificationsUsageDescription: "Claude Notch shows alerts when Claude finishes a long task or when multiple sessions are active."
+        NSAppleEventsUsageDescription: "Claude Notch uses AppleScript to open Terminal at a session's working directory."
+        # Sparkle 2 update channel.
+        # SUFeedURL → appcast tracked in the main repo.
+        # SUPublicEDKey → EdDSA public key generated locally with
+        # `generate_keys`. The matching private key lives ONLY in the
+        # developer's macOS Keychain — `sign_update` reads it to sign each
+        # release zip before it's uploaded.
+        SUFeedURL: "https://raw.githubusercontent.com/arratiabenjamin/claude-notch/main/appcast.xml"
+        SUPublicEDKey: "uoq/b26XC/VodBNcUsDMgFEg3EwCyS5oOn/hh+AHf5E="
+        SUEnableAutomaticChecks: true
+        SUScheduledCheckInterval: 86400
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.velion.claude-notch
         PRODUCT_MODULE_NAME: ClaudeNotch
-        INFOPLIST_KEY_LSUIElement: NO
-        INFOPLIST_KEY_NSPrincipalClass: NSApplication
-        INFOPLIST_KEY_CFBundleDisplayName: "Claude Notch"
+        # Sparkle compares CFBundleShortVersionString to decide if an update
+        # is newer. Bump MARKETING_VERSION every release; bump
+        # CURRENT_PROJECT_VERSION (build number) too — they don't have to
+        # match in marketing terms but both must increase monotonically.
+        MARKETING_VERSION: "2.7.0"
+        CURRENT_PROJECT_VERSION: "270"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
-        INFOPLIST_KEY_CFBundleIconName: AppIcon
-        INFOPLIST_KEY_CFBundleIconFile: AppIcon
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_LSMinimumSystemVersion: "14.0"
-        INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026 Benjamín Arratia / Velion. MIT licensed."
-        INFOPLIST_KEY_NSUserNotificationsUsageDescription: "Claude Notch shows alerts when Claude finishes a long task or when multiple sessions are active."
-        INFOPLIST_KEY_NSAppleEventsUsageDescription: "Claude Notch uses AppleScript to open Terminal at a session's working directory."
   ClaudeNotchTests:
     type: bundle.unit-test
     platform: macOS

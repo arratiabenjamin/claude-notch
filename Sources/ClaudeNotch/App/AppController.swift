@@ -20,6 +20,7 @@ import AppKit
 import SwiftUI
 import Combine
 import Carbon.HIToolbox
+import Sparkle
 
 extension Notification.Name {
     /// Posted by SettingsView when the user flips the "Use notch as Dynamic Island"
@@ -51,6 +52,16 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var cancellables = Set<AnyCancellable>()
     private let hotKeys = HotKeyManager()
+    /// Sparkle 2 auto-updater. Reads SUFeedURL + SUPublicEDKey from the
+    /// app's Info.plist (configured in project.yml). Drives the menu item
+    /// "Check for updates…" and the background scheduled-check loop.
+    private lazy var updaterController: SPUStandardUpdaterController = {
+        SPUStandardUpdaterController(
+            startingUpdater: true,
+            updaterDelegate: nil,
+            userDriverDelegate: nil
+        )
+    }()
 
     // Notch / Dynamic Island state
     private var mode: PanelMode = .hidden
@@ -574,6 +585,17 @@ final class AppController: NSObject, NSApplicationDelegate {
         )
         settings.target = self
         menu.addItem(settings)
+
+        // Sparkle: standard "Check for Updates…" item. Wired to the
+        // updaterController's checkForUpdates: action so Sparkle handles
+        // the whole UI flow (alerts, download, install on relaunch).
+        let updates = NSMenuItem(
+            title: "Check for Updates…",
+            action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
+            keyEquivalent: ""
+        )
+        updates.target = updaterController
+        menu.addItem(updates)
 
         menu.addItem(NSMenuItem.separator())
 
