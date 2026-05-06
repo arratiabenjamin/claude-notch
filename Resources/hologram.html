@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#000000">
+  <title>Velion Hologram</title>
+  <style>
+    /*
+      Pepper's ghost projection page. Two layout modes:
+
+        single  (default): ONE hologram filling most of the display, made
+                for a SINGLE inclined acrylic sheet at ~45° — the display
+                sits flat under the sheet, the user looks at the sheet
+                from the front and sees the reflection floating in air.
+                This is the simplest DIY rig and what the project's
+                first prototype uses.
+
+        pyramid: FOUR copies in a "+" cross, made for an inverted four-
+                sided acrylic pyramid centered on the screen.
+
+      All visible color is white-on-black to maximise the reflection
+      contrast against ambient light.
+
+      Switch via ?layout=single|pyramid (default: single).
+      Correct an inverted reflection via ?flip=none|h|v|hv (default: v —
+      most single-sheet 45° rigs need a vertical flip so the orb doesn't
+      look upside down once reflected).
+    */
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      width: 100%; height: 100%;
+      background: #000;
+      color: #fff;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro", system-ui, sans-serif;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    /* Mode-driven CSS variables (overridden by SSE 'state' events). */
+    :root {
+      --rot-speed: 30s;       /* idle: full meridian sweep ~30s */
+      --ring-fast: 12s;
+      --ring-mid: 16s;
+      --ring-slow: 22s;
+      --scan-cycle: 3.5s;
+      --sweep-cycle: 7.0s;
+      --sigil-spin: 30s;
+      --pulse-amp: 0;          /* 0..1 → drives breathing scale on the orb container */
+      --halo-alpha: 0.20;
+    }
+    body[data-mode="thinking"] {
+      --rot-speed: 18s;
+      --ring-fast: 7s;
+      --ring-mid: 10s;
+      --ring-slow: 14s;
+      --scan-cycle: 1.8s;
+      --sweep-cycle: 4.0s;
+      --sigil-spin: 18s;
+      --halo-alpha: 0.32;
+    }
+    body[data-mode="speaking"] {
+      --rot-speed: 24s;
+      --scan-cycle: 2.5s;
+      --sweep-cycle: 5.5s;
+      --halo-alpha: 0.28;
+    }
+
+    /* The whole stage gets a final mirror transform applied AFTER all
+       internal animations, so the reflection in your acrylic looks
+       right-side up. Most single-sheet 45° rigs invert vertically. */
+    body[data-flip="none"] .stage { transform: scale( 1,  1); }
+    body[data-flip="h"]    .stage { transform: scale(-1,  1); }
+    body[data-flip="v"]    .stage { transform: scale( 1, -1); }
+    body[data-flip="hv"]   .stage { transform: scale(-1, -1); }
+    .stage {
+      position: fixed; inset: 0;
+      display: grid;
+      place-items: center;
+      transform-origin: center center;
+    }
+
+    /* SINGLE layout: one hologram filling most of the screen. */
+    .stage[data-layout="single"] .face {
+      position: relative;
+      width: var(--single-size, 80vmin);
+      height: var(--single-size, 80vmin);
+    }
+    /* In single mode we only render one face — the "main" slot. The
+       four pyramid faces get hidden via CSS. */
+    .stage[data-layout="single"] .face.top,
+    .stage[data-layout="single"] .face.bottom,
+    .stage[data-layout="single"] .face.left,
+    .stage[data-layout="single"] .face.right { display: none; }
+
+    /* PYRAMID layout: four copies cross-arranged. */
+    .stage[data-layout="pyramid"] .face.main { display: none; }
+    .stage[data-layout="pyramid"] .face {
+      position: absolute;
+      width: var(--face-size, 36vmin);
+      height: var(--face-size, 36vmin);
+      display: grid;
+      place-items: center;
+    }
+    .stage[data-layout="pyramid"] .face.top    { top: 0;    left: 50%; transform: translate(-50%, calc(var(--face-gap, 4vmin) * -1)) rotate(180deg); }
+    .stage[data-layout="pyramid"] .face.bottom { bottom: 0; left: 50%; transform: translate(-50%, calc(var(--face-gap, 4vmin)));     rotate(0deg); }
+    .stage[data-layout="pyramid"] .face.left   { left: 0;   top: 50%;  transform: translate(calc(var(--face-gap, 4vmin) * -1), -50%) rotate(90deg); }
+    .stage[data-layout="pyramid"] .face.right  { right: 0;  top: 50%;  transform: translate(calc(var(--face-gap, 4vmin)), -50%)      rotate(-90deg); }
+
+    /* The hologram itself — a square stage that contains everything. */
+    .holo {
+      position: relative;
+      width: 100%; height: 100%;
+      animation: holoFlicker 6.7s ease-in-out infinite;
+    }
+    @keyframes holoFlicker {
+      0%   { opacity: 0.93; }
+      13%  { opacity: 0.97; }
+      27%  { opacity: 0.91; }
+      41%  { opacity: 0.96; }
+      53%  { opacity: 0.92; }
+      67%  { opacity: 0.97; }
+      82%  { opacity: 0.93; }
+      100% { opacity: 0.95; }
+    }
+
+    .layer {
+      position: absolute; inset: 0;
+      display: grid; place-items: center;
+      pointer-events: none;
+    }
+
+    /* Outer halo — soft silver glow on black. Driven by --halo-alpha. */
+    .halo {
+      width: 90%; height: 90%;
+      border-radius: 50%;
+      background: radial-gradient(circle at center,
+        rgba(255,255,255, calc(var(--halo-alpha) + 0.10)) 0%,
+        rgba(255,255,255, calc(var(--halo-alpha) * 0.40)) 38%,
+        rgba(255,255,255, 0) 70%);
+      filter: blur(18px);
+      animation: haloBreath 2.8s ease-in-out infinite;
+    }
+    @keyframes haloBreath {
+      0%, 100% { transform: scale(1.00); }
+      50%      { transform: scale(1.04); }
+    }
+
+    /* Wireframe sphere — 5 parallels (horizontal ellipses)
+       and 6 meridians (vertical ellipses pivoting on Y). */
+    .wireframe {
+      width: 60%; height: 60%;
+      transform-style: preserve-3d;
+      perspective: 800px;
+    }
+    .parallel, .meridian {
+      position: absolute;
+      left: 50%; top: 50%;
+      border: 1px solid rgba(255,255,255,0.65);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      box-shadow: 0 0 4px rgba(255,255,255,0.30) inset;
+      filter: blur(0.3px);
+    }
+    /* Latitudes: ±50°, ±25°, 0° → 5 ellipses. cos(lat) sets width,
+       sin(lat) sets vertical offset, height = width * 0.22. */
+    .parallel.eq   { width: 100%;  height: 22%; top: 50%; }
+    .parallel.n25  { width:  90.6%; height: 19.9%; top: calc(50% - 21.13%); }
+    .parallel.s25  { width:  90.6%; height: 19.9%; top: calc(50% + 21.13%); }
+    .parallel.n50  { width:  64.3%; height: 14.1%; top: calc(50% - 38.30%); }
+    .parallel.s50  { width:  64.3%; height: 14.1%; top: calc(50% + 38.30%); }
+
+    /* Meridians: thin verticals rotating on the Y axis. */
+    .meridian {
+      width: 12%; height: 100%;
+      border-color: rgba(255,255,255,0.45);
+      animation: spinY var(--rot-speed) linear infinite;
+    }
+    .meridian.m0   { transform: translate(-50%, -50%) rotateY(0deg); }
+    .meridian.m1   { transform: translate(-50%, -50%) rotateY(30deg);  animation-delay: calc(var(--rot-speed) * -1/12); }
+    .meridian.m2   { transform: translate(-50%, -50%) rotateY(60deg);  animation-delay: calc(var(--rot-speed) * -2/12); }
+    .meridian.m3   { transform: translate(-50%, -50%) rotateY(90deg);  animation-delay: calc(var(--rot-speed) * -3/12); }
+    .meridian.m4   { transform: translate(-50%, -50%) rotateY(120deg); animation-delay: calc(var(--rot-speed) * -4/12); }
+    .meridian.m5   { transform: translate(-50%, -50%) rotateY(150deg); animation-delay: calc(var(--rot-speed) * -5/12); }
+    @keyframes spinY {
+      from { transform: translate(-50%, -50%) rotateY(0deg); }
+      to   { transform: translate(-50%, -50%) rotateY(360deg); }
+    }
+
+    /* Three centered rings — gyroscope feel. Each on a different plane,
+       rotating at a different rate and direction. */
+    .rings {
+      width: 38%; height: 38%;
+      transform-style: preserve-3d;
+    }
+    .ring {
+      position: absolute; inset: 0;
+      border-radius: 50%;
+      border: 1px solid rgba(255,255,255,0.85);
+      box-shadow: 0 0 4px rgba(255,255,255,0.40);
+    }
+    .ring.a { transform: rotateX(72deg);    animation: ringSpinCW  var(--ring-fast) linear infinite; }
+    .ring.b { transform: rotateY(20deg);    animation: ringSpinCCW var(--ring-mid)  linear infinite; }
+    .ring.c { transform: rotate3d(1,1,0,55deg); animation: ringSpinCW var(--ring-slow) linear infinite; opacity: 0.65; }
+    @keyframes ringSpinCW  { from { transform: var(--ring-base, rotateX(72deg)) rotateZ(0deg); }
+                              to   { transform: var(--ring-base, rotateX(72deg)) rotateZ(360deg); } }
+    @keyframes ringSpinCCW { from { transform: var(--ring-base, rotateY(20deg)) rotateZ(0deg); }
+                              to   { transform: var(--ring-base, rotateY(20deg)) rotateZ(-360deg); } }
+
+    /* Velion sigil: V wings + tiny core sphere above. Stroke-only,
+       slowly spinning around Y so wings foreshorten as they turn. */
+    .sigil-wrap {
+      width: 32%; height: 34%;
+      transform-style: preserve-3d;
+      animation: sigilSpin var(--sigil-spin) linear infinite;
+    }
+    @keyframes sigilSpin {
+      from { transform: rotateY(0deg); }
+      to   { transform: rotateY(360deg); }
+    }
+    .sigil-svg { width: 100%; height: 100%; overflow: visible; }
+    .sigil-svg path {
+      fill: none;
+      stroke: rgba(255,255,255,0.92);
+      stroke-width: 1.4;
+      stroke-linejoin: round;
+      filter: drop-shadow(0 0 4px rgba(255,255,255,0.55));
+    }
+    .sigil-core {
+      position: absolute;
+      width: 8%; height: 8%;
+      left: 50%;
+      top: 14%;
+      transform: translate(-50%, 0);
+      border-radius: 50%;
+      background: radial-gradient(circle at 40% 35%,
+        #fff 0%, rgba(255,255,255,0.30) 70%, rgba(255,255,255,0) 100%);
+      box-shadow: 0 0 6px rgba(255,255,255,0.85);
+    }
+
+    /* HUD scan band — horizontal bright stripe sweeping vertically. */
+    .scan-band {
+      position: absolute;
+      width: 90%; height: 6px;
+      left: 5%; top: 50%;
+      background: linear-gradient(to bottom,
+        rgba(255,255,255,0) 0%,
+        rgba(255,255,255,0.32) 50%,
+        rgba(255,255,255,0) 100%);
+      filter: blur(1.6px);
+      mix-blend-mode: screen;
+      animation: scanY var(--scan-cycle) linear infinite;
+    }
+    @keyframes scanY {
+      0%   { transform: translateY(-300%); }
+      100% { transform: translateY(300%); }
+    }
+
+    /* Sweep beam — vertical scanner crossing horizontally. */
+    .sweep-beam {
+      position: absolute;
+      width: 4px; height: 90%;
+      left: 50%; top: 5%;
+      background: linear-gradient(to right,
+        rgba(255,255,255,0) 0%,
+        rgba(255,255,255,0.45) 50%,
+        rgba(255,255,255,0) 100%);
+      filter: blur(1.2px);
+      mix-blend-mode: screen;
+      animation: sweepX var(--sweep-cycle) linear infinite;
+    }
+    @keyframes sweepX {
+      0%   { transform: translateX(-300%); }
+      100% { transform: translateX(300%); }
+    }
+
+    /* Pulse modifier (driven by --pulse-amp from SSE for .speaking). */
+    .holo {
+      transform: scale(calc(1 + var(--pulse-amp) * 0.12));
+    }
+
+    /* HUD readout in the center (a square the pyramid won't reflect).
+       Useful for debugging — hides if ?hud=0 in the URL. */
+    .center-readout {
+      position: fixed;
+      left: 50%; top: 50%;
+      transform: translate(-50%, -50%);
+      font: 600 10px/1.3 ui-monospace, "SF Mono", Menlo, monospace;
+      color: rgba(255,255,255,0.30);
+      letter-spacing: 0.18em;
+      text-align: center;
+      pointer-events: none;
+    }
+    .center-readout span { display: block; }
+    body[data-hud="0"] .center-readout { display: none; }
+
+    /* Help text shown on first load only; tap to dismiss. */
+    .help {
+      position: fixed;
+      left: 50%; bottom: 20px;
+      transform: translateX(-50%);
+      padding: 10px 16px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 999px;
+      font-size: 11px;
+      color: rgba(255,255,255,0.65);
+      letter-spacing: 0.06em;
+      transition: opacity 0.4s ease;
+      cursor: pointer;
+    }
+    .help.hidden { opacity: 0; pointer-events: none; }
+  </style>
+</head>
+<body data-mode="idle" data-hud="1" data-flip="v">
+  <div class="stage" data-layout="single">
+    <!--
+      SINGLE-layout face (default): one hologram centered. Used for the
+      45° acrylic-sheet rig. CSS hides the four pyramid faces in this
+      mode; switch to layout=pyramid in the URL to show them instead.
+    -->
+    <div class="face main">   <div class="holo" data-tpl></div></div>
+
+    <!--
+      PYRAMID-layout faces: four copies cross-arranged, each rotated so
+      its TOP points outward. The acrylic pyramid reflects each face
+      inward and the four reflections superimpose at the center.
+    -->
+    <div class="face top">    <div class="holo" data-tpl></div></div>
+    <div class="face right">  <div class="holo" data-tpl></div></div>
+    <div class="face bottom"> <div class="holo" data-tpl></div></div>
+    <div class="face left">   <div class="holo" data-tpl></div></div>
+  </div>
+
+  <div class="center-readout">
+    <span id="readout-mode">VELION · IDLE</span>
+    <span id="readout-counts">0 RUN · 0 IDLE</span>
+  </div>
+
+  <div class="help" id="help">Tap to fullscreen · ?layout=pyramid · ?flip=v|h|hv|none</div>
+
+  <template id="holo-template">
+    <div class="layer halo-layer"><div class="halo"></div></div>
+    <div class="layer">
+      <div class="wireframe">
+        <div class="parallel n50"></div>
+        <div class="parallel n25"></div>
+        <div class="parallel eq"></div>
+        <div class="parallel s25"></div>
+        <div class="parallel s50"></div>
+        <div class="meridian m0"></div>
+        <div class="meridian m1"></div>
+        <div class="meridian m2"></div>
+        <div class="meridian m3"></div>
+        <div class="meridian m4"></div>
+        <div class="meridian m5"></div>
+      </div>
+    </div>
+    <div class="layer">
+      <div class="rings">
+        <div class="ring a"></div>
+        <div class="ring b"></div>
+        <div class="ring c"></div>
+      </div>
+    </div>
+    <div class="layer">
+      <div class="sigil-wrap">
+        <div class="sigil-core"></div>
+        <svg class="sigil-svg" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">
+          <!--
+            V wings, two symmetric closed paths sharing the bottom apex.
+            Coordinates match the SwiftUI VWingsShape used in the app.
+          -->
+          <path d="
+            M 50 95
+            C 60 60, 80 65, 95 15
+            C 91 11,  76 23, 68 33
+            C 60 50, 54 30, 50 95 Z
+            M 50 95
+            C 40 60, 20 65,  5 15
+            C  9 11,  24 23, 32 33
+            C 40 50, 46 30, 50 95 Z
+          "/>
+        </svg>
+      </div>
+    </div>
+    <div class="layer"><div class="scan-band"></div></div>
+    <div class="layer"><div class="sweep-beam"></div></div>
+  </template>
+
+  <script>
+    // ---------------------------------------------------------------------
+    // 1) Boot: clone the template into each .holo slot.
+    // ---------------------------------------------------------------------
+    const tpl = document.getElementById('holo-template');
+    document.querySelectorAll('[data-tpl]').forEach(slot => {
+      slot.appendChild(tpl.content.cloneNode(true));
+    });
+
+    // ---------------------------------------------------------------------
+    // 2) URL params: tweakables for the projector geometry.
+    //    ?layout=single|pyramid   (default: single — for 45° acrylic sheet)
+    //    ?flip=none|h|v|hv        (default: v — most single-sheet rigs)
+    //    ?size=NNvmin             single-mode hologram size (default 80vmin)
+    //    ?face=NNvmin             pyramid-mode copy size  (default 36vmin)
+    //    ?gap=NNvmin              pyramid-mode offset from center (default 4vmin)
+    //    ?hud=0|1                 show/hide the centered debug readout
+    // ---------------------------------------------------------------------
+    const params = new URLSearchParams(location.search);
+    const stage = document.querySelector('.stage');
+
+    const layout = (params.get('layout') || 'single').toLowerCase();
+    if (layout === 'pyramid' || layout === 'single') {
+      stage.dataset.layout = layout;
+    }
+
+    const flip = (params.get('flip') || 'v').toLowerCase();
+    if (['none','h','v','hv'].includes(flip)) {
+      document.body.dataset.flip = flip;
+    }
+
+    const sizeSingle = params.get('size');
+    if (sizeSingle) document.documentElement.style.setProperty('--single-size', sizeSingle);
+    const sizeFace = params.get('face');
+    if (sizeFace)   document.documentElement.style.setProperty('--face-size', sizeFace);
+    const gap = params.get('gap');
+    if (gap)        document.documentElement.style.setProperty('--face-gap', gap);
+    if (params.get('hud') === '0') document.body.dataset.hud = '0';
+
+    // ---------------------------------------------------------------------
+    // 3) Tap to dismiss help + request fullscreen on iOS / Android.
+    // ---------------------------------------------------------------------
+    const help = document.getElementById('help');
+    function goFullscreen() {
+      const el = document.documentElement;
+      if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+    }
+    document.body.addEventListener('click', () => {
+      help.classList.add('hidden');
+      goFullscreen();
+    }, { once: false });
+
+    // Hide the help bubble after 8s even without tapping.
+    setTimeout(() => help.classList.add('hidden'), 8000);
+
+    // Keep the screen awake on iOS by re-entering Safari every 30s.
+    // (Actual Wake Lock API requires HTTPS or a user gesture per session.)
+    if ('wakeLock' in navigator) {
+      navigator.wakeLock.request('screen').catch(() => {});
+    }
+
+    // ---------------------------------------------------------------------
+    // 4) Server-Sent Events: the Mac pushes a JSON state on every tick.
+    //    Schema (matches HologramState.swift):
+    //      { mode: "idle"|"thinking"|"speaking", amplitude, runningCount, idleCount }
+    // ---------------------------------------------------------------------
+    const readoutMode = document.getElementById('readout-mode');
+    const readoutCounts = document.getElementById('readout-counts');
+
+    function applyState(state) {
+      document.body.dataset.mode = state.mode || 'idle';
+      const amp = Math.max(0, Math.min(1, +state.amplitude || 0));
+      document.documentElement.style.setProperty('--pulse-amp', amp.toFixed(3));
+      readoutMode.textContent = `VELION · ${(state.mode || 'idle').toUpperCase()}`;
+      readoutCounts.textContent =
+        `${state.runningCount || 0} RUN · ${state.idleCount || 0} IDLE`;
+    }
+
+    function connect() {
+      try {
+        const es = new EventSource('/state');
+        es.addEventListener('state', (e) => {
+          try { applyState(JSON.parse(e.data)); } catch (_) {}
+        });
+        es.onerror = () => {
+          // Browser auto-reconnects, but if the server went away we
+          // want a visual hint after a few seconds.
+          setTimeout(() => {
+            if (es.readyState === EventSource.CLOSED) connect();
+          }, 2000);
+        };
+      } catch (e) {
+        console.error('SSE failed:', e);
+      }
+    }
+    connect();
+  </script>
+</body>
+</html>

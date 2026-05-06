@@ -40,6 +40,9 @@ struct SettingsView: View {
     var onResetPosition: () -> Void
     /// Quit the app from the same window — saves a trip to the menu bar.
     var onQuit: () -> Void
+    /// HologramServer surface so the toggle row can show the live URL +
+    /// connected client count. Owned by AppController.
+    @ObservedObject var hologramServer: HologramServer
 
     @AppStorage("notify_threshold_s") private var thresholdSeconds: Double = 90
     @AppStorage("default_position") private var defaultPositionRaw: String = PanelCorner.topRight.rawValue
@@ -51,6 +54,11 @@ struct SettingsView: View {
     /// "Activar avatar") is just a `!` away.
     @AppStorage("avatar_muted") private var avatarMuted: Bool = true
     @AppStorage("avatar_voice_lang") private var avatarVoiceLang: String = "es-MX"
+    /// Hologram projector mode: when ON the app exposes a local HTTP page
+    /// designed for a Pepper's ghost acrylic pyramid. AppController
+    /// observes the `.claudeHologramServerToggle` notification we post on
+    /// every flip and starts/stops HologramServer accordingly.
+    @AppStorage("hologram_projector_enabled") private var hologramEnabled: Bool = false
 
     /// String-bound mirror of `thresholdSeconds` so the user can type freely
     /// without losing focus on every keystroke.
@@ -161,6 +169,54 @@ struct SettingsView: View {
                     .pickerStyle(.menu)
                     .frame(maxWidth: 240)
                     .padding(.top, 2)
+                }
+            }
+
+            // Hologram projector
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle("Modo proyector holográfico", isOn: Binding(
+                    get: { hologramEnabled },
+                    set: { newValue in
+                        hologramEnabled = newValue
+                        NotificationCenter.default.post(
+                            name: .claudeHologramServerToggle,
+                            object: nil
+                        )
+                    }
+                ))
+                Text("Sirve una página HTML para Pepper's ghost. Default: 1 holograma (acrílico inclinado a 45°). Para una pirámide de 4 caras agregá ?layout=pyramid a la URL. Para corregir reflejo invertido: ?flip=h, ?flip=v o ?flip=none.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+
+                if hologramEnabled {
+                    if let url = hologramServer.url {
+                        HStack(spacing: 6) {
+                            Text(url)
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .textSelection(.enabled)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Button {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(url, forType: .string)
+                            } label: {
+                                Image(systemName: "doc.on.doc")
+                                    .font(.system(size: 11))
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Copiar URL")
+                        }
+                        .padding(.top, 2)
+                        Text(hologramServer.clientCount == 0
+                             ? "Sin clientes conectados todavía."
+                             : "\(hologramServer.clientCount) cliente\(hologramServer.clientCount == 1 ? "" : "s") conectado\(hologramServer.clientCount == 1 ? "" : "s").")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Iniciando servidor…")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
 

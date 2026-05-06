@@ -26,6 +26,9 @@ extension Notification.Name {
     /// Posted by SettingsView when the user flips the "Use notch as Dynamic Island"
     /// toggle. AppController re-evaluates the active mode in response.
     static let claudeNotchModeDidChange = Notification.Name("com.velion.claude-notch.notchModeDidChange")
+    /// Posted by SettingsView when the user flips the "Modo proyector
+    /// holográfico" toggle. AppController starts/stops HologramServer.
+    static let claudeHologramServerToggle = Notification.Name("com.velion.claude-notch.hologramServerToggle")
 }
 
 @MainActor
@@ -63,6 +66,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         )
     }()
 
+    /// Local HTTP server that serves the Pepper's ghost pyramid page.
+    /// Started/stopped via the Settings toggle (`hologram_projector_enabled`).
+    let hologramServer = HologramServer()
+
     // Notch / Dynamic Island state
     private var mode: PanelMode = .hidden
     private var notchInfo: NotchInfo?
@@ -89,6 +96,9 @@ final class AppController: NSObject, NSApplicationDelegate {
         /// Whether the user has explicitly set `useNotchMode`. If false, we
         /// auto-default based on hardware (notch present → on).
         static let useNotchModeExplicitlySet = "use_notch_mode_explicitly_set"
+        /// Whether the local hologram HTTP server is running. Toggled from
+        /// Settings; observed via `.claudeHologramServerToggle`.
+        static let hologramEnabled = "hologram_projector_enabled"
     }
 
     private static let defaultPanelSize = NSSize(width: 320, height: 320)
@@ -465,6 +475,21 @@ final class AppController: NSObject, NSApplicationDelegate {
             name: .claudeNotchModeDidChange,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleHologramToggle(_:)),
+            name: .claudeHologramServerToggle,
+            object: nil
+        )
+        // Apply persisted preference on launch (default: off).
+        if UserDefaults.standard.bool(forKey: Keys.hologramEnabled) {
+            hologramServer.start()
+        }
+    }
+
+    @objc private func handleHologramToggle(_ note: Notification) {
+        let enabled = UserDefaults.standard.bool(forKey: Keys.hologramEnabled)
+        if enabled { hologramServer.start() } else { hologramServer.stop() }
     }
 
     @objc private func handleNotchModeDidChange(_ note: Notification) {
@@ -680,7 +705,8 @@ final class AppController: NSObject, NSApplicationDelegate {
 
         let view = SettingsView(
             onResetPosition: { [weak self] in self?.resetPanelPosition() },
-            onQuit: { NSApp.terminate(nil) }
+            onQuit: { NSApp.terminate(nil) },
+            hologramServer: hologramServer
         )
         let hosting = NSHostingController(rootView: view)
         let window = NSWindow(contentViewController: hosting)
@@ -765,5 +791,45 @@ final class AppController: NSObject, NSApplicationDelegate {
                 self?.updateStatusBadge(for: state)
             }
             .store(in: &cancellables)
+
+        // Live hologram-server state push. Combines the session pool and
+        // the avatar amplitude into a single HologramState that's fanned
+        // out over SSE to whichever phone/Pi/projector is connected.
+        Publishers.CombineLatest(store.$state, speaker.$amplitude)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] state, amp in
+                self?.pushHologramState(state: state, amplitude: amp)
+            }
+            .store(in: &cancellables)
+    }
+
+    /// Translate the in-app session/audio state into the simpler
+    /// HologramState the projector page consumes, and broadcast.
+    private func pushHologramState(state: UIState, amplitude: Double) {
+        guard hologramServer.isRunning else { return }
+        let mode: HologramState.Mode
+        if amplitude > 0.01 {
+            mode = .speaking
+        } else if case .populated(let active) = state,
+                  active.contains(where: { $0.status == .running }) {
+            mode = .thinking
+        } else {
+            mode = .idle
+        }
+        let running: Int
+        let idle: Int
+        if case .populated(let active) = state {
+            running = active.filter { $0.status == .running }.count
+            idle = active.count - running
+        } else {
+            running = 0
+            idle = 0
+        }
+        hologramServer.push(HologramState(
+            mode: mode,
+            amplitude: amplitude,
+            runningCount: running,
+            idleCount: idle
+        ))
     }
 }
