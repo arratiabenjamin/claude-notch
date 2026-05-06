@@ -38,8 +38,9 @@ final class AvatarSpeaker: ObservableObject {
     // MARK: - Published lip-sync hook
 
     /// 0..1 RMS amplitude of the most recent rendered audio frame. OrbView
-    /// reads this and feeds it into VelionOrb.pulseAmplitude. Falls back to
-    /// 0 between utterances.
+    /// reads this to feed VelionHologram's `.speaking(amplitude:)` mode so
+    /// the orb scale tracks the avatar's voice. Falls back to 0 between
+    /// utterances.
     @Published private(set) var amplitude: Double = 0.0
 
     /// True while there's an utterance playing or rendering.

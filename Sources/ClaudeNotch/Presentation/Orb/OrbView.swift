@@ -82,11 +82,9 @@ struct OrbView: View {
 
             // Stage with the orb + satellites
             ZStack {
-                VelionOrb(
+                VelionHologram(
                     size: bloomed ? centralOrbSizeBloomed : centralOrbSizeCollapsed,
-                    glowIntensity: aggregateGlow,
-                    pulseAmplitude: speaker.amplitude,
-                    accent: aggregateColor
+                    mode: centralMode
                 )
                 .onTapGesture {
                     withAnimation(.spring(response: 0.55, dampingFraction: 0.78)) {
@@ -100,10 +98,9 @@ struct OrbView: View {
                         let sessionsInSlot = sessionsIn(slot: slot)
                         let baseOffset = slotOffset(slot)
                         ForEach(Array(sessionsInSlot.enumerated()), id: \.element.id) { stackIndex, session in
-                            SatelliteOrb(
-                                session: session,
+                            VelionSatelliteHologram(
                                 size: satelliteSize,
-                                emphasized: hoveredId == session.id
+                                mode: satelliteMode(for: session)
                             )
                             .offset(stackedOffset(base: baseOffset, stackIndex: stackIndex, stackTotal: sessionsInSlot.count))
                             .onHover { hovering in
@@ -267,30 +264,26 @@ struct OrbView: View {
         return []
     }
 
-    /// Aggregate orb tint:
-    /// - any running session  → warm amber (tool/work tone)
-    /// - idle but populated   → electric cyan (default tech accent)
-    /// - empty / loading      → cool desaturated cyan
-    private var aggregateColor: Color {
-        switch store.state {
-        case .populated(let active) where active.contains(where: { $0.status == .running }):
-            return Color(red: 1.00, green: 0.80, blue: 0.35)
-        case .populated(let active) where !active.isEmpty:
-            return Color(red: 0.30, green: 0.85, blue: 1.00)
-        default:
-            return Color(red: 0.45, green: 0.65, blue: 0.85)
+    /// Mode for the central hologram. Speaking takes priority (the avatar
+    /// is voicing a summary right now, the orb should react to its audio).
+    /// Otherwise, thinking iff any session is running, idle the rest of
+    /// the time. Brand palette is silver/white only — state is communicated
+    /// by motion, never by hue.
+    private var centralMode: VelionMode {
+        if speaker.amplitude > 0.01 {
+            return .speaking(amplitude: speaker.amplitude)
         }
+        if activeSessions.contains(where: { $0.status == .running }) {
+            return .thinking
+        }
+        return .idle
     }
 
-    private var aggregateGlow: Double {
-        switch store.state {
-        case .populated(let active) where active.contains(where: { $0.status == .running }):
-            return 0.95
-        case .populated(let active) where !active.isEmpty:
-            return 0.80
-        default:
-            return 0.40
-        }
+    /// Mode for an individual satellite — running sessions pulse, idle ones
+    /// just wiggle. Hover doesn't switch the mode; the bubble overlay is
+    /// what shows that state to the user.
+    private func satelliteMode(for session: SessionState) -> VelionMode {
+        session.status == .running ? .thinking : .idle
     }
 
     private var emptyCaption: String {

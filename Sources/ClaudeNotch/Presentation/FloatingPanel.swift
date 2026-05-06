@@ -1,10 +1,16 @@
 // FloatingPanel.swift
 // Borderless, non-activating, floating NSPanel that hosts our SwiftUI content.
 // Configured to:
-//   - never become key/main (never steals focus)
+//   - non-activating (.nonactivatingPanel + LSUIElement accessory app):
+//     the app itself never steals focus from whatever was frontmost,
+//     even though the panel CAN become key (see `canBecomeKey` below).
+//   - become key on click: required for SwiftUI Buttons inside the panel
+//     to receive mouseDown cleanly when isMovableByWindowBackground is on.
+//     Same accessory-panel recipe Raycast/Alfred use.
 //   - join all spaces (visible regardless of which Mission Control space is up)
-//   - be draggable by its background ONLY in free-floating mode (the orchestrator
-//     toggles `isMovableByWindowBackground` per mode — Dynamic Island modes are pinned).
+//   - draggable by its background ONLY in free-floating mode (the orchestrator
+//     toggles `isMovableByWindowBackground` per mode — Dynamic Island modes
+//     are pinned in place).
 //
 // v2.0 adds frame helpers + animated frame changes to support the
 // compact↔expanded "Dynamic Island" transition driven by AppController.

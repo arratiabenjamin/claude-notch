@@ -468,12 +468,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     @objc private func handleNotchModeDidChange(_ note: Notification) {
-        let useNotch = UserDefaults.standard.bool(forKey: Keys.useNotchMode)
-        let explicit = UserDefaults.standard.bool(forKey: Keys.useNotchModeExplicitlySet)
-        let detected = NotchDetector.detect() != nil
-        NSLog("[claude-notch] handleNotchModeDidChange: useNotch=\(useNotch) explicit=\(explicit) hardwareDetected=\(detected)")
         applyDefaultMode()
-        NSLog("[claude-notch] handleNotchModeDidChange: after applyDefaultMode, mode=\(String(describing: self.mode))")
     }
 
     // MARK: - Free-floating origin restoration (v1.x legacy path)
