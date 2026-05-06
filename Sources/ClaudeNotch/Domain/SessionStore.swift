@@ -176,6 +176,11 @@ final class SessionStore: ObservableObject {
         // Capture slots BEFORE prune so a session that ends + disappears
         // in the same tick still has a known direction for spatial audio.
         announceTransitions(previous: previous, current: sessions)
+
+        // Mirror the (full) session set to /tmp so the screen saver bundle —
+        // which runs under a sandbox that blocks reads of ~/.claude/ — has a
+        // current view it can read without entitlements.
+        SaverMirror.write(sessions)
     }
 
     /// Detect transitions worth announcing on the avatar:

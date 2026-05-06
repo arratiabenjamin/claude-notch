@@ -54,6 +54,29 @@ targets:
         SWIFT_STRICT_CONCURRENCY: complete
         PRODUCT_MODULE_NAME: ClaudeNotchTests
         SWIFT_INSTALL_OBJC_HEADER: NO
+  ClaudeNotchSaver:
+    type: com.apple.product-type.bundle
+    platform: macOS
+    sources:
+      - path: Sources/ClaudeNotchSaver
+      - path: Sources/ClaudeNotch/Domain/SessionState.swift
+      - path: Sources/ClaudeNotch/Infrastructure/JSONLoader.swift
+      - path: Sources/ClaudeNotch/Presentation/Orb/VelionOrb.swift
+      - path: Sources/ClaudeNotch/Presentation/Orb/SatelliteOrb.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.velion.claude-notch.saver
+        PRODUCT_NAME: "Claude Notch Velion"
+        PRODUCT_MODULE_NAME: ClaudeNotchSaver
+        WRAPPER_EXTENSION: saver
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_NSPrincipalClass: ClaudeNotchSaver
+        INFOPLIST_KEY_CFBundlePackageType: BNDL
+        INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026 Benjamín Arratia / Velion. MIT licensed."
+        SKIP_INSTALL: YES
+        SWIFT_INSTALL_OBJC_HEADER: NO
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @loader_path/../Frameworks @executable_path/../Frameworks /System/Library/Frameworks"
+        FRAMEWORK_SEARCH_PATHS: "$(inherited) /System/Library/Frameworks"
 schemes:
   ClaudeNotch:
     build:
@@ -63,3 +86,7 @@ schemes:
     test:
       targets:
         - ClaudeNotchTests
+  ClaudeNotchSaver:
+    build:
+      targets:
+        ClaudeNotchSaver: all
